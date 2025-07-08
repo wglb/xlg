@@ -83,21 +83,28 @@
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
 ;;;          optionally prefixed with a date/time string including microseconds.
+;;;          Optionally echoes the output to standard output.
 ;;; It looks up the stream using a keyword from the global *LOG-STREAMS* hash table.
 ;;;
-;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args)
+;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args &key line-prefix echo-to-stdout)
 ;;;   - log-keyword: A keyword (e.g., `:APP-LOG`, `:ERROR-LOG`) that identifies
 ;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
 ;;;   - format-and-keyword-args: Remaining arguments, which may include format arguments
-;;;     and the keyword argument `:line-prefix` followed by its value.
+;;;     and the keyword arguments `:line-prefix` and `:echo-to-stdout`.
+;;;   - :line-prefix: An optional string to append after the microsecond timestamp
+;;;     for the log entry line. If NIL, no timestamp is added.
+;;;   - :echo-to-stdout: If true, the formatted log message will also be printed
+;;;     to *standard-output*.
 ;;;
 ;;; Returns: (No explicit return value, writes to stream)
 (defmacro xlg (log-keyword format-string &rest all-args)
   (let ((line-prefix-g (gensym "LINE-PREFIX"))
+        (echo-to-stdout-g (gensym "ECHO-TO-STDOUT")) ; New gensym for echo option
         (format-args-g (gensym "FORMAT-ARGS")))
-    ;; Manually parse the arguments to separate format arguments from :line-prefix
+    ;; Manually parse the arguments to separate format arguments and keyword arguments
     `(let (,line-prefix-g
+           ,echo-to-stdout-g ; Initialize new gensym
            (,format-args-g nil))
        (let ((temp-args ',all-args))
          (loop while temp-args do
@@ -105,21 +112,30 @@
                (progn
                  (setf ,line-prefix-g (cadr temp-args))
                  (setf temp-args (cddr temp-args))) ; Skip key and value
-               (progn
-                 (push (car temp-args) ,format-args-g)
-                 (setf temp-args (cdr temp-args)))))
+               (if (and (consp temp-args) (eq (car temp-args) :echo-to-stdout)) ; Parse new keyword
+                   (progn
+                     (setf ,echo-to-stdout-g (cadr temp-args))
+                     (setf temp-args (cddr temp-args))) ; Skip key and value
+                   (progn
+                     (push (car temp-args) ,format-args-g)
+                     (setf temp-args (cdr temp-args))))))
          (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
 
        ;; Retrieve the stream from the global *LOG-STREAMS* hash table
-       (let ((stream (gethash ,log-keyword *log-streams*)))
+       (let* ((stream (gethash ,log-keyword *log-streams*))
+              (prefix-string (if ,line-prefix-g
+                                 (formatted-current-time-micro ,line-prefix-g)
+                                 ""))
+              (final-format-string (concatenate 'string prefix-string ,format-string)))
          (when (streamp stream) ; Check if a valid stream was found
-           (let* ((prefix-string (if ,line-prefix-g
-                                     (formatted-current-time-micro ,line-prefix-g)
-                                     ""))
-                  (final-format-string (concatenate 'string prefix-string ,format-string)))
-             (apply #'format stream final-format-string ,format-args-g)
-             (terpri stream)
-             (finish-output stream)))))))
+           (apply #'format stream final-format-string ,format-args-g)
+           (terpri stream)
+           (finish-output stream))
+
+         ;; Echo to *standard-output* if requested
+         (when ,echo-to-stdout-g
+           (apply #'format *standard-output* final-format-string ,format-args-g)
+           (terpri *standard-output*))))))
 
 ;;; Macro: WITH-OPEN-LOG-FILES
 ;;; Purpose: Opens multiple log files, stores them in the *LOG-STREAMS* hash table
