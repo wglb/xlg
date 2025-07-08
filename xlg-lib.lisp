@@ -1,8 +1,8 @@
-;;; File: xlg.lisp
+;;; File: xlg-lib.lisp
 ;;; Description: Contains the core logic for the XLog logging library,
-;;; including the WITH-OPEN-LOG-FILES and XLG macros.
+;;; including the WITH-OPEN-LOG-FILES and XLG macros, and stream flushing utilities.
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
-(in-package #:xlg)
+(in-package #:xlg-lib) ; Package name changed to :xlg-lib
 
 ;; Calculate the offset from 1900-01-01 to 1970-01-01 (Unix epoch)
 ;; This is needed for SBCL's SB-EXT:GET-TIME-OF-DAY which returns seconds since Unix epoch,
@@ -42,7 +42,7 @@
                      y m d h))
       (:ym (format nil "~4,'0D-~2,'0D_"
                    y m))
-      (:ymd (format nil "~4,'0D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
+      (:ymd (format nil "~4,'00D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
                     y m d))
       ;; If 'dates' is non-NIL but not one of the specific keywords,
       ;; assume the default YMD_ format.
@@ -67,6 +67,18 @@
         (decode-universal-time (+ +epoch-offset+ seconds)) ; Using +epoch-offset+
       (format nil "~4,'0D-~2,'0d-~2,'0d ~2,'0d:~2,'0d:~2,'0d.~6,'0d ~A"
               y m d h min s microsec str))))
+
+;;; Function: FLUSH-ALL-LOG-STREAMS
+;;; Purpose: Flushes the output buffers of all currently open log streams
+;;;          managed by *LOG-STREAMS*.
+;;; This ensures that all buffered log entries are written to their respective files.
+(defun flush-all-log-streams ()
+  "Flushes the output buffers of all currently open log streams managed by *LOG-STREAMS*."
+  (maphash (lambda (key stream)
+             (declare (ignore key)) ; Key is not used here
+             (when (streamp stream)
+               (finish-output stream)))
+           *log-streams*))
 
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
@@ -142,15 +154,15 @@
         (unless (keywordp keyword-name)
           (error "WITH-OPEN-LOG-FILES: Stream identifier must be a keyword, but got ~S" keyword-name))
 
-        (let* ((final-file-path (if date-prefix
-                                    `(concatenate 'string (dates-ymd ,date-prefix) ,file-path)
-                                    file-path))
+        (let* ((date-prefix-string-form (if date-prefix
+                                            `(xlg-lib::dates-ymd ,date-prefix) ; Form to evaluate at runtime
+                                            "")) ; Empty string if no prefix
                (open-if-exists (cond ((eq if-exists-option :replace) :supersede)
                                      (t :append)))) ; Default to :append
 
           ;; Form to open the file and store in *LOG-STREAMS*
           (push `(setf (gethash ,keyword-name *log-streams*)
-                       (open ,final-file-path
+                       (open (concatenate 'string ,date-prefix-string-form ,file-path)
                              :direction :output
                              :if-exists ,open-if-exists
                              :if-does-not-exist :create))
