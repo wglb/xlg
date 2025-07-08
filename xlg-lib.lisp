@@ -160,7 +160,8 @@
 (defmacro with-open-log-files (log-streams &body body)
   "Opens multiple log files, stores them in *LOG-STREAMS* under specified keywords,
    executes a body of code, and ensures files are closed and removed from *LOG-STREAMS*
-   using unwind-protect. Optionally prefixes filenames with a date/time string."
+   using unwind-protect. Optionally prefixes filenames with a date/time string.
+   Signals an error if a log keyword is already in use by an enclosing WITH-OPEN-LOG-FILES block."
   (let ((open-forms '())     ; Forms to open files and store in hash table
         (cleanup-forms '())) ; Forms to close files and remove from hash table
 
@@ -169,6 +170,14 @@
       (destructuring-bind (keyword-name file-path &optional date-prefix if-exists-option) stream-spec
         (unless (keywordp keyword-name)
           (error "WITH-OPEN-LOG-FILES: Stream identifier must be a keyword, but got ~S" keyword-name))
+
+        ;; --- NEW CHECK FOR NESTING SAFETY - NOW AT RUNTIME ---
+        (push `(when (gethash ,keyword-name *log-streams*)
+                 (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block.
+                         Please use a unique keyword for nested log streams or ensure no overlap."
+                        ,keyword-name))
+              open-forms) ; Pushed to open-forms, so it runs at runtime
+        ;; --- END NEW CHECK ---
 
         (let* ((date-prefix-string-form (if date-prefix
                                             `(xlg-lib::dates-ymd ,date-prefix) ; Form to evaluate at runtime
@@ -191,14 +200,14 @@
                      (remhash ,keyword-name *log-streams*)))
                 cleanup-forms))))
 
-    ;; Reverse lists to maintain original order
+    ;; Reverse lists to maintain original order (open-forms will now have checks first, then opens)
     (setf open-forms (nreverse open-forms))
     (setf cleanup-forms (nreverse cleanup-forms))
 
     ;; Construct the final macro expansion
     `(unwind-protect
           (progn
-            ;; Execute all open forms
+            ;; Execute all open forms (including the runtime checks)
             ,@open-forms
             ;; The main body of code that uses the opened log streams
             ,@body)
