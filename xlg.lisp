@@ -2,23 +2,29 @@
 ;;; Description: Contains the core logic for the XLog logging library,
 ;;; including the WITH-OPEN-LOG-FILES and XLG macros.
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
-(in-package #:xlg) ; Renamed in-package form
+(in-package #:xlg)
+
+;; Calculate the offset from 1900-01-01 to 1970-01-01 (Unix epoch)
+;; This is needed for SBCL's SB-EXT:GET-TIME-OF-DAY which returns seconds since Unix epoch,
+;; while DECODE-UNIVERSAL-TIME expects seconds since 1900.
+(defconstant +epoch-offset+ (encode-universal-time 0 0 0 1 1 1970 0)) ; Renamed to follow constant naming convention
 
 ;;; Function: DATES-YMD
 ;;; Purpose: Creates a file name prefix based on the current date and time.
+;;; This function is used by WITH-OPEN-LOG-FILES for filename prefixing.
 ;;;
 ;;; Arguments:
 ;;;   dates: A keyword specifying the date/time format.
-;;;          :hms - YYYY-MM-DD-HH-MM-SS_
-;;;          :hour - YYYY-MM-DD-HH_
-;;;          :ym - YYYY-MM_
-;;;          :ymd - YYYY-MM-DD
-;;;          t (or any other non-keyword) - YYYY-MM-DD_ (default if just 'dates' is provided without a specific keyword)
+;;;          :hms --MM-DD-HH-MM-SS_
+;;;          :hour --MM-DD-HH_
+;;;          :ym --MM_
+;;;          :ymd --MM-DD_
+;;;          t (or any other non-keyword) --MM-DD_ (default if just 'dates' is provided without a specific keyword)
 ;;;          nil - no prefix
 ;;;
 ;;; Returns: A string representing the date/time prefix, or an empty string.
 (defun dates-ymd (dates)
-  "Create a file name from the current time,
+  "Create a file name prefix from the current time,
    including optionally hour, or hours minutes and seconds as part of the file name."
   (multiple-value-bind (s min h d m y doy dstflag offset)
       (decode-universal-time (get-universal-time))
@@ -40,32 +46,70 @@
                             y m))
                    ((equal dates :ymd)
                     (format nil
-                            "~4,'0D-~2,'0D-~2,'0D_" ; Changed to include underscore for consistent prefixing
+                            "~4,'0D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
                             y m d))
-                   (dates (format nil ; This catches a non-nil, non-keyword argument, effectively the old 'dates' behavior
+                   (dates (format nil ; Catches a non-nil, non-keyword argument, effectively the old 'dates' behavior
                                   "~4,'0D-~2,'0D-~2,'0D_"
                                   y m d))
                    (t (format nil ""))))) ; If dates is nil, return empty string
       filename)))
 
+;;; Function: FORMATTED-CURRENT-TIME-MICRO
+;;; Purpose: Produces a formatted timestamp string with microseconds.
+;;; This function is used by XLG for line prefixing.
+;;;
+;;; Arguments:
+;;;   str: An optional string to append after the timestamp.
+;;;
+;;; Returns: A formatted timestamp string.
+(defun formatted-current-time-micro (str)
+  "Produce a formatted timestamp from the current time, including microseconds."
+  (multiple-value-bind (seconds microsec)
+      (sb-ext:get-time-of-day)
+    (multiple-value-bind (s min h d m y)
+        (decode-universal-time (+ +epoch-offset+ seconds)) ; Using +epoch-offset+
+      (format nil "~4,'0D-~2,'0d-~2,'0d ~2,'0d:~2,'0d:~2,'0d.~6,'0d ~A"
+              y m d h min s microsec str))))
+
 ;;; Macro: XLG
-;;; Purpose: Writes a formatted log entry to a specified log stream.
+;;; Purpose: Writes a formatted log entry to a specified log stream,
+;;;          optionally prefixed with a date/time string including microseconds.
 ;;; It checks if the stream variable is bound and is an actual stream before writing.
 ;;;
-;;; Usage: (xlg stream-variable format-string &rest args)
+;;; Usage: (xlg stream-variable format-string &rest format-and-keyword-args)
 ;;;   - stream-variable: The actual variable (e.g., `app-log`, `error-log`) that has been
 ;;;     bound to an output stream by the `WITH-OPEN-LOG-FILES` macro.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
-;;;   - args: Zero or more arguments that will be formatted according to `format-string`.
-(defmacro xlg (stream-variable format-string &rest args)
-  "Logs a formatted message to the specified log stream.
-   The stream must be bound by WITH-OPEN-LOG-FILES.
-   Adds a newline character after each log entry and flushes the stream."
-  ;; Now directly use stream-variable, which will be the lexically bound stream.
-  `(when (streamp ,stream-variable) ; Check if the value of the variable is a stream
-     (format ,stream-variable ,format-string ,@args) ; Write the formatted string
-     (terpri ,stream-variable)                      ; Write a newline character
-     (finish-output ,stream-variable)))           ; Explicitly flush the stream to ensure content is written
+;;;   - format-and-keyword-args: Remaining arguments, which may include format arguments
+;;;     and the keyword argument `:line-prefix` followed by its value.
+;;;
+;;; Returns: (No explicit return value, writes to stream)
+(defmacro xlg (stream-variable format-string &rest all-args)
+  (let ((line-prefix-g (gensym "LINE-PREFIX"))
+        (format-args-g (gensym "FORMAT-ARGS")))
+    ;; Manually parse the arguments to separate format arguments from :line-prefix
+    `(let (,line-prefix-g
+           (,format-args-g nil))
+       (let ((temp-args ',all-args))
+         (loop while temp-args do
+           (if (and (consp temp-args) (eq (car temp-args) :line-prefix))
+               (progn
+                 (setf ,line-prefix-g (cadr temp-args))
+                 (setf temp-args (cddr temp-args))) ; Skip key and value
+               (progn
+                 (push (car temp-args) ,format-args-g)
+                 (setf temp-args (cdr temp-args)))))
+         (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
+
+       (when (streamp ,stream-variable)
+         (let* ((prefix-string (if ,line-prefix-g
+                                   (formatted-current-time-micro ,line-prefix-g)
+                                   ""))
+                (final-format-string (concatenate 'string prefix-string ,format-string))
+                (stream ,stream-variable))
+           (apply #'format stream final-format-string ,format-args-g) ; Corrected: using APPLY
+           (terpri stream)
+           (finish-output stream))))))
 
 ;;; Macro: WITH-OPEN-LOG-FILES
 ;;; Purpose: Opens multiple log files, binds them to specified variables,
