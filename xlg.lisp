@@ -112,7 +112,7 @@
            (finish-output stream))))))
 
 ;;; Macro: WITH-OPEN-LOG-FILES
-;;; Purpose: Opens multiple log files, binds them to specified variables,
+;;; Purpose: Opens multiple log files, binds them to specified variables (dynamically),
 ;;;          executes a body of code, and ensures all log files are closed
 ;;;          even if errors occur, using `unwind-protect`.
 ;;; Each file is opened in append mode, creating it if it doesn't exist.
@@ -123,55 +123,56 @@
 ;;;   - log-streams: A list of lists. Each inner list must be of the form
 ;;;     `(variable-name "file-path-string" &optional date-prefix-keyword if-exists-option)`.
 ;;;     `variable-name` will be a symbol (e.g., `my-log-stream`) that gets
-;;;     bound to the opened stream object within the scope of the macro's body.
+;;;     dynamically bound to the opened stream object within the scope of the macro's body.
 ;;;     `file-path-string` is a string representing the path to the log file.
 ;;;     `date-prefix-keyword` is an optional keyword (e.g., `:ymd`, `:hms`)
 ;;;     to prepend a date/time string to the filename. If not provided, no prefix.
 ;;;     `if-exists-option` is an optional keyword (`:append` or `:replace`).
 ;;;     If `:replace`, the file will be overwritten. Defaults to `:append`.
 ;;;   - body: One or more Common Lisp forms to be executed within the context
-;;;     where the log streams are open and bound.
+;;;     where the log streams are open and dynamically bound.
 (defmacro with-open-log-files (log-streams &body body)
   "Opens multiple log files, binds them to specified variables,
    executes a body of code, and ensures the log files are closed
    using unwind-protect. Each log file is opened in append mode.
    Optionally prefixes filenames with a date/time string.
-   Provides an option to append to or replace an existing file."
+   Provides an option to append to or replace an existing file.
+   The stream variables are bound dynamically, making them accessible
+   to functions called within the body's dynamic extent."
+  (let ((bindings '())
+        (close-forms '())
+        (special-declarations '())) ; List to collect variables to declare special
 
-  (let ((bindings '())      ; A list to accumulate the `let` binding forms
-        (close-forms '()))  ; A list to accumulate the `close` forms for `unwind-protect`
-
-    ;; Iterate through each stream specification provided by the user
+    ;; Process each stream specification
     (dolist (stream-spec log-streams)
-      ;; Destructure each specification into the variable name, file path, optional date prefix, and optional if-exists option
       (destructuring-bind (var-name file-path &optional date-prefix if-exists-option) stream-spec
         (let* ((final-file-path (if date-prefix
                                     `(concatenate 'string (dates-ymd ,date-prefix) ,file-path)
                                     file-path))
                (open-if-exists (cond ((eq if-exists-option :replace) :supersede)
                                      (t :append)))) ; Default to :append
-          ;; Add a binding form to the `bindings` list.
+          ;; Add the binding for the stream variable
           (push `(,var-name (open ,final-file-path
                                   :direction :output
-                                  :if-exists ,open-if-exists ; Use the determined if-exists option
+                                  :if-exists ,open-if-exists
                                   :if-does-not-exist :create))
                 bindings)
-          ;; Add a close form to the `close-forms` list.
+          ;; Add the close form for unwind-protect
           (push `(when (and (boundp ',var-name) (streamp (symbol-value ',var-name)))
                    (close (symbol-value ',var-name)))
-                close-forms))))
+                close-forms)
+          ;; Add the variable name to the list for special declaration
+          (push var-name special-declarations))))
 
-    ;; Reverse the lists. `push` adds elements to the front, so `nreverse`
-    ;; restores the original order of declarations and ensures close forms
-    ;; are processed in a predictable order.
+    ;; Reverse lists to maintain original order
     (setf bindings (nreverse bindings))
     (setf close-forms (nreverse close-forms))
+    (setf special-declarations (nreverse special-declarations))
 
-    ;; Construct the final macro expansion.
-    ;; `let` establishes the lexical bindings for the stream variables.
-    ;; `unwind-protect` guarantees that the `close-forms` are executed
-    ;; regardless of how the `body` exits (normally or via non-local exit/error).
+    ;; Construct the final macro expansion
     `(let ,bindings
+       ;; Declare all bound variables as special
+       (declare (special ,@special-declarations))
        (unwind-protect
             ;; The main body of code that uses the opened log streams
             (progn ,@body)
