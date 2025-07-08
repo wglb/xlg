@@ -9,6 +9,12 @@
 ;; while DECODE-UNIVERSAL-TIME expects seconds since 1900.
 (defconstant +epoch-offset+ (encode-universal-time 0 0 0 1 1 1970 0)) ; Renamed to follow constant naming convention
 
+;;; Special Variable: *LOG-STREAMS*
+;;; Purpose: A global hash table to store currently open log streams,
+;;;          mapped by their keyword identifiers. This allows dynamic access.
+(defvar *log-streams* (make-hash-table :test 'eq)
+  "A hash table mapping log stream keywords to their open stream objects.")
+
 ;;; Function: DATES-YMD
 ;;; Purpose: Creates a file name prefix based on the current date and time.
 ;;; This function is used by WITH-OPEN-LOG-FILES for filename prefixing.
@@ -29,30 +35,21 @@
   (multiple-value-bind (s min h d m y doy dstflag offset)
       (decode-universal-time (get-universal-time))
     (declare (ignore doy))
-    (let* ((filename
-             (cond ((equal dates :hms)
-                    (format nil
-                            "~4,'0D-~2,'0D-~2,'0D-~2,'0D-~2,'0D-~2,'0D_"
-                            y m d
-                            (+ h offset (if dstflag -1 0))
-                            min s))
-                   ((equal dates :hour)
-                    (format nil
-                            "~4,'0D-~2,'0D-~2,'0D-~2,'0D_"
-                            y m d h))
-                   ((equal dates :ym)
-                    (format nil
-                            "~4,'0D-~2,'0D_"
-                            y m))
-                   ((equal dates :ymd)
-                    (format nil
-                            "~4,'0D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
-                            y m d))
-                   (dates (format nil ; Catches a non-nil, non-keyword argument, effectively the old 'dates' behavior
-                                  "~4,'0D-~2,'0D-~2,'0D_"
-                                  y m d))
-                   (t (format nil ""))))) ; If dates is nil, return empty string
-      filename)))
+    (case dates
+      (:hms (format nil "~4,'0D-~2,'0D-~2,'0D-~2,'0D-~2,'0D-~2,'0D_"
+                    y m d (+ h offset (if dstflag -1 0)) min s))
+      (:hour (format nil "~4,'0D-~2,'0D-~2,'0D-~2,'0D_"
+                     y m d h))
+      (:ym (format nil "~4,'0D-~2,'0D_"
+                   y m))
+      (:ymd (format nil "~4,'0D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
+                    y m d))
+      ;; If 'dates' is non-NIL but not one of the specific keywords,
+      ;; assume the default YMD_ format.
+      ((t) (format nil "~4,'0D-~2,'0D-~2,'0D_"
+                   y m d))
+      ;; If 'dates' is NIL or any other unrecognized value, return empty string
+      (otherwise (format nil "")))))
 
 ;;; Function: FORMATTED-CURRENT-TIME-MICRO
 ;;; Purpose: Produces a formatted timestamp string with microseconds.
@@ -74,17 +71,17 @@
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
 ;;;          optionally prefixed with a date/time string including microseconds.
-;;; It checks if the stream variable is bound and is an actual stream before writing.
+;;; It looks up the stream using a keyword from the global *LOG-STREAMS* hash table.
 ;;;
-;;; Usage: (xlg stream-variable format-string &rest format-and-keyword-args)
-;;;   - stream-variable: The actual variable (e.g., `app-log`, `error-log`) that has been
-;;;     bound to an output stream by the `WITH-OPEN-LOG-FILES` macro.
+;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args)
+;;;   - log-keyword: A keyword (e.g., `:APP-LOG`, `:ERROR-LOG`) that identifies
+;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
 ;;;   - format-and-keyword-args: Remaining arguments, which may include format arguments
 ;;;     and the keyword argument `:line-prefix` followed by its value.
 ;;;
 ;;; Returns: (No explicit return value, writes to stream)
-(defmacro xlg (stream-variable format-string &rest all-args)
+(defmacro xlg (log-keyword format-string &rest all-args)
   (let ((line-prefix-g (gensym "LINE-PREFIX"))
         (format-args-g (gensym "FORMAT-ARGS")))
     ;; Manually parse the arguments to separate format arguments from :line-prefix
@@ -101,80 +98,81 @@
                  (setf temp-args (cdr temp-args)))))
          (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
 
-       (when (streamp ,stream-variable)
-         (let* ((prefix-string (if ,line-prefix-g
-                                   (formatted-current-time-micro ,line-prefix-g)
-                                   ""))
-                (final-format-string (concatenate 'string prefix-string ,format-string))
-                (stream ,stream-variable))
-           (apply #'format stream final-format-string ,format-args-g) ; Corrected: using APPLY
-           (terpri stream)
-           (finish-output stream))))))
+       ;; Retrieve the stream from the global *LOG-STREAMS* hash table
+       (let ((stream (gethash ,log-keyword *log-streams*)))
+         (when (streamp stream) ; Check if a valid stream was found
+           (let* ((prefix-string (if ,line-prefix-g
+                                     (formatted-current-time-micro ,line-prefix-g)
+                                     ""))
+                  (final-format-string (concatenate 'string prefix-string ,format-string)))
+             (apply #'format stream final-format-string ,format-args-g)
+             (terpri stream)
+             (finish-output stream)))))))
 
 ;;; Macro: WITH-OPEN-LOG-FILES
-;;; Purpose: Opens multiple log files, binds them to specified variables (dynamically),
-;;;          executes a body of code, and ensures all log files are closed
-;;;          even if errors occur, using `unwind-protect`.
+;;; Purpose: Opens multiple log files, stores them in the *LOG-STREAMS* hash table
+;;;          under specified keywords, executes a body of code, and ensures
+;;;          all log files are closed and removed from the hash table upon exit.
 ;;; Each file is opened in append mode, creating it if it doesn't exist.
 ;;;
-;;; Usage: (with-open-log-files (((stream-var-1 "path/to/file1.log" &optional date-prefix-keyword if-exists-option)
-;;;                                (stream-var-2 "path/to/file2.log"))
+;;; Usage: (with-open-log-files (((:stream-keyword-1 "path/to/file1.log" &optional date-prefix-keyword if-exists-option)
+;;;                                (:stream-keyword-2 "path/to/file2.log"))
 ;;;          body-forms...)
 ;;;   - log-streams: A list of lists. Each inner list must be of the form
-;;;     `(variable-name "file-path-string" &optional date-prefix-keyword if-exists-option)`.
-;;;     `variable-name` will be a symbol (e.g., `my-log-stream`) that gets
-;;;     dynamically bound to the opened stream object within the scope of the macro's body.
+;;;     `(keyword-name "file-path-string" &optional date-prefix-keyword if-exists-option)`.
+;;;     `keyword-name` will be a keyword (e.g., `:MY-LOG-STREAM`) used as a key
+;;;     in the *LOG-STREAMS* hash table.
 ;;;     `file-path-string` is a string representing the path to the log file.
 ;;;     `date-prefix-keyword` is an optional keyword (e.g., `:ymd`, `:hms`)
 ;;;     to prepend a date/time string to the filename. If not provided, no prefix.
 ;;;     `if-exists-option` is an optional keyword (`:append` or `:replace`).
 ;;;     If `:replace`, the file will be overwritten. Defaults to `:append`.
 ;;;   - body: One or more Common Lisp forms to be executed within the context
-;;;     where the log streams are open and dynamically bound.
+;;;     where the log streams are open and accessible via *LOG-STREAMS*.
 (defmacro with-open-log-files (log-streams &body body)
-  "Opens multiple log files, binds them to specified variables,
-   executes a body of code, and ensures the log files are closed
-   using unwind-protect. Each log file is opened in append mode.
-   Optionally prefixes filenames with a date/time string.
-   Provides an option to append to or replace an existing file.
-   The stream variables are bound dynamically, making them accessible
-   to functions called within the body's dynamic extent."
-  (let ((bindings '())
-        (close-forms '())
-        (special-declarations '())) ; List to collect variables to declare special
+  "Opens multiple log files, stores them in *LOG-STREAMS* under specified keywords,
+   executes a body of code, and ensures files are closed and removed from *LOG-STREAMS*
+   using unwind-protect. Optionally prefixes filenames with a date/time string."
+  (let ((open-forms '())     ; Forms to open files and store in hash table
+        (cleanup-forms '())) ; Forms to close files and remove from hash table
 
     ;; Process each stream specification
     (dolist (stream-spec log-streams)
-      (destructuring-bind (var-name file-path &optional date-prefix if-exists-option) stream-spec
+      (destructuring-bind (keyword-name file-path &optional date-prefix if-exists-option) stream-spec
+        (unless (keywordp keyword-name)
+          (error "WITH-OPEN-LOG-FILES: Stream identifier must be a keyword, but got ~S" keyword-name))
+
         (let* ((final-file-path (if date-prefix
                                     `(concatenate 'string (dates-ymd ,date-prefix) ,file-path)
                                     file-path))
                (open-if-exists (cond ((eq if-exists-option :replace) :supersede)
                                      (t :append)))) ; Default to :append
-          ;; Add the binding for the stream variable
-          (push `(,var-name (open ,final-file-path
-                                  :direction :output
-                                  :if-exists ,open-if-exists
-                                  :if-does-not-exist :create))
-                bindings)
-          ;; Add the close form for unwind-protect
-          (push `(when (and (boundp ',var-name) (streamp (symbol-value ',var-name)))
-                   (close (symbol-value ',var-name)))
-                close-forms)
-          ;; Add the variable name to the list for special declaration
-          (push var-name special-declarations))))
+
+          ;; Form to open the file and store in *LOG-STREAMS*
+          (push `(setf (gethash ,keyword-name *log-streams*)
+                       (open ,final-file-path
+                             :direction :output
+                             :if-exists ,open-if-exists
+                             :if-does-not-exist :create))
+                open-forms)
+
+          ;; Form to close the file and remove from *LOG-STREAMS*
+          (push `(let ((stream (gethash ,keyword-name *log-streams*)))
+                   (when (and stream (streamp stream))
+                     (close stream)
+                     (remhash ,keyword-name *log-streams*)))
+                cleanup-forms))))
 
     ;; Reverse lists to maintain original order
-    (setf bindings (nreverse bindings))
-    (setf close-forms (nreverse close-forms))
-    (setf special-declarations (nreverse special-declarations))
+    (setf open-forms (nreverse open-forms))
+    (setf cleanup-forms (nreverse cleanup-forms))
 
     ;; Construct the final macro expansion
-    `(let ,bindings
-       ;; Declare all bound variables as special
-       (declare (special ,@special-declarations))
-       (unwind-protect
+    `(unwind-protect
+          (progn
+            ;; Execute all open forms
+            ,@open-forms
             ;; The main body of code that uses the opened log streams
-            (progn ,@body)
-         ;; The cleanup forms, executed when the `unwind-protect` block is exited
-         ,@close-forms))))
+            ,@body)
+       ;; The cleanup forms, executed when the `unwind-protect` block is exited
+       ,@cleanup-forms)))
