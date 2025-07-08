@@ -15,11 +15,11 @@
 ;;;
 ;;; Arguments:
 ;;;   dates: A keyword specifying the date/time format.
-;;;          :hms --MM-DD-HH-MM-SS_
-;;;          :hour --MM-DD-HH_
-;;;          :ym --MM_
-;;;          :ymd --MM-DD_
-;;;          t (or any other non-keyword) --MM-DD_ (default if just 'dates' is provided without a specific keyword)
+;;;          :hms -YYYY-MM-DD-HH-MM-SS_
+;;;          :hour -YYYY-MM-DD-HH_
+;;;          :ym -YYYY-MM_
+;;;          :ymd -YYYY-MM-DD_
+;;;          t (or any other non-keyword) -YYYY-MM-DD_ (default if just 'dates' is provided without a specific keyword)
 ;;;          nil - no prefix
 ;;;
 ;;; Returns: A string representing the date/time prefix, or an empty string.
@@ -117,35 +117,44 @@
 ;;;          even if errors occur, using `unwind-protect`.
 ;;; Each file is opened in append mode, creating it if it doesn't exist.
 ;;;
-;;; Usage: (with-open-log-files (((stream-var-1 "path/to/file1.log" :ymd)
+;;; Usage: (with-open-log-files (((stream-var-1 "path/to/file1.log" &optional date-prefix-keyword if-exists-option)
 ;;;                                (stream-var-2 "path/to/file2.log"))
 ;;;          body-forms...)
 ;;;   - log-streams: A list of lists. Each inner list must be of the form
-;;;     `(variable-name "file-path-string" &optional date-prefix-keyword)`.
+;;;     `(variable-name "file-path-string" &optional date-prefix-keyword if-exists-option)`.
 ;;;     `variable-name` will be a symbol (e.g., `my-log-stream`) that gets
 ;;;     bound to the opened stream object within the scope of the macro's body.
 ;;;     `file-path-string` is a string representing the path to the log file.
 ;;;     `date-prefix-keyword` is an optional keyword (e.g., `:ymd`, `:hms`)
 ;;;     to prepend a date/time string to the filename. If not provided, no prefix.
+;;;     `if-exists-option` is an optional keyword (`:append` or `:replace`).
+;;;     If `:replace`, the file will be overwritten. Defaults to `:append`.
 ;;;   - body: One or more Common Lisp forms to be executed within the context
 ;;;     where the log streams are open and bound.
 (defmacro with-open-log-files (log-streams &body body)
   "Opens multiple log files, binds them to specified variables,
    executes a body of code, and ensures the log files are closed
    using unwind-protect. Each log file is opened in append mode.
-   Optionally prefixes filenames with a date/time string."
+   Optionally prefixes filenames with a date/time string.
+   Provides an option to append to or replace an existing file."
+
   (let ((bindings '())      ; A list to accumulate the `let` binding forms
         (close-forms '()))  ; A list to accumulate the `close` forms for `unwind-protect`
 
     ;; Iterate through each stream specification provided by the user
     (dolist (stream-spec log-streams)
-      ;; Destructure each specification into the variable name, file path, and optional date prefix
-      (destructuring-bind (var-name file-path &optional date-prefix) stream-spec
-        (let ((final-file-path (if date-prefix
-                                   `(concatenate 'string (dates-ymd ,date-prefix) ,file-path)
-                                   file-path)))
+      ;; Destructure each specification into the variable name, file path, optional date prefix, and optional if-exists option
+      (destructuring-bind (var-name file-path &optional date-prefix if-exists-option) stream-spec
+        (let* ((final-file-path (if date-prefix
+                                    `(concatenate 'string (dates-ymd ,date-prefix) ,file-path)
+                                    file-path))
+               (open-if-exists (cond ((eq if-exists-option :replace) :supersede)
+                                     (t :append)))) ; Default to :append
           ;; Add a binding form to the `bindings` list.
-          (push `(,var-name (open ,final-file-path :direction :output :if-exists :append :if-does-not-exist :create))
+          (push `(,var-name (open ,final-file-path
+                                  :direction :output
+                                  :if-exists ,open-if-exists ; Use the determined if-exists option
+                                  :if-does-not-exist :create))
                 bindings)
           ;; Add a close form to the `close-forms` list.
           (push `(when (and (boundp ',var-name) (streamp (symbol-value ',var-name)))
