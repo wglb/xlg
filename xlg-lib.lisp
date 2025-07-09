@@ -1,4 +1,3 @@
-
 ;;; File: xlg-lib.lisp
 ;;; Description: Contains the core logic for the XLog logging library,
 ;;; including the WITH-OPEN-LOG-FILES and XLG macros, and stream flushing utilities.
@@ -78,9 +77,9 @@
   (maphash (lambda (key stream)
              (declare (ignore key)) ; Key is not used here
              (when (streamp stream)
-               (finish-output stream))
-			 (finish-output))
-           *log-streams*))
+               (finish-output stream)))
+           *log-streams*)
+  (finish-output)) ; Added to flush *standard-output* as well
 
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
