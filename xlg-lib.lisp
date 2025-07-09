@@ -162,24 +162,24 @@
           (push `(,original-value-var (gethash ,keyword-name *log-streams*)) let-bindings) ; Store original value
 
           ;; --- Setup forms for the main progn body ---
-          ;; 1. Runtime check for existing keyword usage
-          (push `(when (gethash ,keyword-name *log-streams*)
-                   (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block.
-                           Please use a unique keyword for nested log streams or ensure no overlap."
-                          ,keyword-name))
-                progn-body-forms)
+          ;; Combine the check, open, and setf into a single progn for this stream
+          (push `(progn
+                   ;; 1. Runtime check for existing keyword usage - MUST be first
+                   (when (gethash ,keyword-name *log-streams*)
+                     (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block.
+                             Please use a unique keyword for nested log streams or ensure no overlap."
+                            ,keyword-name))
 
-          ;; 2. Open the new stream and assign to lexical variable
-          (let* ((date-prefix-string-form (if date-prefix `(xlg-lib::dates-ymd ,date-prefix) ""))
-                 (open-if-exists (cond ((eq if-exists-option :replace) :supersede) (t :append))))
-            (push `(setf ,new-stream-var (open (concatenate 'string ,date-prefix-string-form ,file-path) ; Use concatenate 'string
-                                               :direction :output
-                                               :if-exists ,open-if-exists
-                                               :if-does-not-exist :create))
-                  progn-body-forms))
+                   ;; 2. Open the new stream and assign to lexical variable - ONLY if check passes
+                   (let* ((date-prefix-string-form (if ,date-prefix `(xlg-lib::dates-ymd ,date-prefix) ""))
+                          (open-if-exists (cond ((eq ,if-exists-option :replace) :supersede) (t :append))))
+                     (setf ,new-stream-var (open (concatenate 'string ,date-prefix-string-form ,file-path)
+                                                :direction :output
+                                                :if-exists open-if-exists
+                                                :if-does-not-exist :create)))
 
-          ;; 3. Put the new stream into the global hash table
-          (push `(setf (gethash ,keyword-name *log-streams*) ,new-stream-var)
+                   ;; 3. Put the new stream into the global hash table
+                   (setf (gethash ,keyword-name *log-streams*) ,new-stream-var))
                 progn-body-forms)
 
           ;; --- Cleanup forms for unwind-protect ---
@@ -208,3 +208,4 @@
          ;; The cleanup forms, executed when the `unwind-protect` block is exited
          (progn ; Wrap cleanup forms in a progn to ensure sequential execution
            ,@unwind-protect-cleanup-forms)))))
+
