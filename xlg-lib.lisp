@@ -145,63 +145,66 @@
   "Opens multiple log files, stores them in *LOG-STREAMS* under specified keywords,
    executes a body of code, and ensures files are closed and removed from *LOG-STREAMS*
    using unwind-protect. Optionally prefixes filenames with a date/time string."
-  (let ((stream-vars-bindings '()) ; List of (gensym-var nil) for the top-level let
-        (open-and-check-forms '())  ; Forms to be executed sequentially in the progn
-        (cleanup-forms '()))        ; Forms for cleanup
+  (let ((let-bindings '()) ; List of (new-stream-var nil) for the top-level let
+        (progn-body-forms '()) ; Forms to execute in the main body (checks, setf gethash)
+        (unwind-protect-cleanup-forms '())) ; Forms for cleanup
 
     (dolist (stream-spec log-streams)
       (destructuring-bind (keyword-name file-path &optional date-prefix if-exists-option) stream-spec
         (unless (keywordp keyword-name)
           (error "WITH-OPEN-LOG-FILES: Stream identifier must be a keyword, but got ~S" keyword-name))
 
-        (let ((g-stream-var (gensym (string-upcase (symbol-name keyword-name)))))
-          ;; Add to top-level let bindings for the generated code
-          (push `(,g-stream-var nil) stream-vars-bindings)
+        (let ((new-stream-var (gensym (string-upcase (symbol-name keyword-name))))
+              (original-value-var (gensym "ORIGINAL-VALUE"))) ; Gensym for original hash table value
 
-          ;; Add forms for opening and checking
-          (push `(progn
-                   ;; Runtime check for existing keyword usage
-                   (when (gethash ,keyword-name *log-streams*)
-                     (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block."
-                            ,keyword-name))
-                   ;; Construct final file path and open options
-                   (let* ((final-file-path (if ,date-prefix
-                                               (concatenate 'string (xlg-lib::dates-ymd ,date-prefix) ,file-path) ; Ensure package prefix
-                                               ,file-path))
-                          (open-if-exists (cond ((eq ,if-exists-option :replace) :supersede)
-                                                (t :append))))
-                     ;; Open the file and set the gensym'd stream variable
-                     (setf ,g-stream-var (open final-file-path
+          ;; Add lexical bindings
+          (push `(,new-stream-var nil) let-bindings)
+          (push `(,original-value-var (gethash ,keyword-name *log-streams*)) let-bindings) ; Store original value
+
+          ;; --- Setup forms for the main progn body ---
+          ;; 1. Runtime check for existing keyword usage
+          (push `(when (gethash ,keyword-name *log-streams*)
+                   (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block.
+                           Please use a unique keyword for nested log streams or ensure no overlap."
+                          ,keyword-name))
+                progn-body-forms)
+
+          ;; 2. Open the new stream and assign to lexical variable
+          (let* ((date-prefix-string-form (if date-prefix `(xlg-lib::dates-ymd ,date-prefix) ""))
+                 (open-if-exists (cond ((eq if-exists-option :replace) :supersede) (t :append))))
+            (push `(setf ,new-stream-var (open (concatenate 'string ,date-prefix-string-form ,file-path) ; Use concatenate 'string
                                                :direction :output
-                                               :if-exists open-if-exists
+                                               :if-exists ,open-if-exists
                                                :if-does-not-exist :create))
-                     ;; Store the stream in the global hash table
-                     (setf (gethash ,keyword-name *log-streams*) ,g-stream-var)))
-                open-and-check-forms)
+                  progn-body-forms))
 
-          ;; Add cleanup forms
-          (push `(let ((stream-to-close ,g-stream-var)) ; Use the gensym'd variable for this specific stream
-                   (when (and stream-to-close
-                              (streamp stream-to-close)
-                              ;; Only remove if this specific stream is still associated with the keyword
-                              (eq stream-to-close (gethash ,keyword-name *log-streams*)))
-                     (close stream-to-close)
-                     (remhash ,keyword-name *log-streams*)))
-                cleanup-forms))))
+          ;; 3. Put the new stream into the global hash table
+          (push `(setf (gethash ,keyword-name *log-streams*) ,new-stream-var)
+                progn-body-forms)
+
+          ;; --- Cleanup forms for unwind-protect ---
+          ;; 1. Close the stream opened by this instance (if it was successfully opened)
+          (push `(when (and ,new-stream-var (streamp ,new-stream-var))
+                   (close ,new-stream-var))
+                unwind-protect-cleanup-forms)
+
+          ;; 2. Restore the original hash table value for this keyword
+          (push `(setf (gethash ,keyword-name *log-streams*) ,original-value-var)
+                unwind-protect-cleanup-forms))))
 
     ;; Reverse lists to maintain original order
-    (setf stream-vars-bindings (nreverse stream-vars-bindings))
-    (setf open-and-check-forms (nreverse open-and-check-forms))
-    (setf cleanup-forms (nreverse cleanup-forms))
+    (setf let-bindings (nreverse let-bindings))
+    (setf progn-body-forms (nreverse progn-body-forms))
+    (setf unwind-protect-cleanup-forms (nreverse unwind-protect-cleanup-forms))
 
     ;; Construct the final macro expansion
-    `(let ,stream-vars-bindings ; Bind all gensym'd stream variables
+    `(let ,let-bindings
        (unwind-protect
             (progn
-              ;; Execute all opening and checking forms
-              ,@open-and-check-forms
+              ;; Execute all open forms
+              ,@progn-body-forms
               ;; The main body of code that uses the opened log streams
               ,@body)
          ;; The cleanup forms, executed when the `unwind-protect` block is exited
          (progn ; Wrap cleanup forms in a progn to ensure sequential execution
-           ,@cleanup-forms)))))
+           ,@unwind-protect-cleanup-forms)))))

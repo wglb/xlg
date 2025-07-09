@@ -22,7 +22,7 @@
 (fiveam:test single-stream-logging-with-prefixes
   (format t "~%--- Running Test Case 1: Single Stream Logging with YMD Filename and Microsecond Line Prefixes ---~%")
   ;; CORRECTED: Use concatenate 'string for log-file path construction
-  (let ((log-file (merge-pathnames (xlg-lib::dates-ymd :ymd) "single-stream.log")))
+  (let ((log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "single-stream.log")))
     (when (probe-file log-file) (delete-file log-file)) ; Clean up previous run
     (xlg-lib:with-open-log-files ((:single-log "single-stream.log" :ymd)) ; Use keyword for stream
       ;; Line prefixed with microsecond timestamp, no additional string
@@ -40,7 +40,7 @@
 (fiveam:test two-stream-logging-varied-prefixes
   (format t "~%--- Running Test Case 2: Two Stream Logging (One Filename Prefix, Varied Line Prefixes) ---~%")
   ;; CORRECTED: Use concatenate 'string for log-file path construction
-  (let ((app-log-file (merge-pathnames (xlg-lib::dates-ymd :ymd) "two-streams-app.log"))
+  (let ((app-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "two-streams-app.log"))
         (err-log-file "two-streams-error.log"))
     (when (probe-file app-log-file) (delete-file app-log-file))
     (when (probe-file err-log-file) (delete-file err-log-file))
@@ -65,9 +65,9 @@
 ;; --- Test Case 3: Logging to three streams, all with YMD prefix for filename and varied line prefixes ---
 (fiveam:test three-stream-logging-with-prefixes
   (format t "~%--- Running Test Case 3: Three Stream Logging with YMD Filename and Varied Line Prefixes ---~%")
-  (let ((main-log-file (merge-pathnames (xlg-lib::dates-ymd :ymd) "three-streams-main.log"))
-        (debug-log-file (merge-pathnames (xlg-lib::dates-ymd :ymd) "three-streams-debug.log"))
-        (audit-log-file (merge-pathnames (xlg-lib::dates-ymd :ymd) "three-streams-audit.log")))
+  (let ((main-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "three-streams-main.log"))
+        (debug-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "three-streams-debug.log"))
+        (audit-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "three-streams-audit.log")))
     (when (probe-file main-log-file) (delete-file main-log-file))
     (when (probe-file debug-log-file) (delete-file debug-log-file))
     (when (probe-file audit-log-file) (delete-file audit-log-file))
