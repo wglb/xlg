@@ -77,7 +77,9 @@
   (maphash (lambda (key stream)
              (declare (ignore key)) ; Key is not used here
              (when (streamp stream)
-               (finish-output stream)))
+			   (format t "Finishing output stream ~s~%" stream)
+               (finish-output stream))
+			 (finish-output))
            *log-streams*))
 
 ;;; Macro: XLG
@@ -91,10 +93,10 @@
 ;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
 ;;;   - format-and-keyword-args: Remaining arguments, which may include format arguments
-;;;     and the keyword arguments `:line-prefix` and `:echo-to-stdout`.
+;;;     and the keyword arguments `:line-prefix` and `:stdout`.
 ;;;   - :line-prefix: An optional string to append after the microsecond timestamp
 ;;;     for the log entry line. If NIL, no timestamp is added.
-;;;   - :echo-to-stdout: If true, the formatted log message will also be printed
+;;;   - :stdout: If true, the formatted log message will also be printed
 ;;;     to *standard-output*.
 ;;;
 ;;; Returns: (No explicit return value, writes to stream)
@@ -112,10 +114,11 @@
                (progn
                  (setf ,line-prefix-g (cadr temp-args))
                  (setf temp-args (cddr temp-args))) ; Skip key and value
-               (if (and (consp temp-args) (eq (car temp-args) :echo-to-stdout)) ; Parse new keyword
+               (if (and (consp temp-args) (eq (car temp-args) :stdout)) ; Parse new keyword
                    (progn
                      (setf ,echo-to-stdout-g (cadr temp-args))
-                     (setf temp-args (cddr temp-args))) ; Skip key and value
+                     (setf temp-args (cddr temp-args))
+					 (format t "xlg: temp args now set to ~s~%" temp-args)) ; Skip key and value
                    (progn
                      (push (car temp-args) ,format-args-g)
                      (setf temp-args (cdr temp-args))))))

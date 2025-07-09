@@ -1,7 +1,6 @@
 ;;; File: xlg-lib.asd
 ;;; Description: ASDF system definition for the XLog logging library.
-;;; This file defines how the Common Lisp system is built and loaded.
-(asdf:defsystem #:xlg-lib ; System name changed to :xlg-lib
+(asdf:defsystem #:xlg-lib
   :description "A simple logging library for Common Lisp with multiple log streams."
   :author "Bill <wgl@ciex-security.com>" ; Personalized for Bill with updated email
   :license "MIT"

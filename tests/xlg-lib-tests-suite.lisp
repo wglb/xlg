@@ -1,6 +1,11 @@
 ;;; File: tests/xlg-lib-tests-suite.lisp
 ;;; Description: Contains the FiveAM test suite and individual test cases for the XLog library.
 
+;; to run the tests, do
+; (asdf:load-system :xlg-lib-tests)
+; (asdf:test-system :xlg-lib-tests)
+
+
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
 
 ;; Ensure the xlg-lib-tests package is available
@@ -83,12 +88,12 @@
     (fiveam:is-true (probe-file debug-log-file) "Debug log file should be created.")
     (fiveam:is-true (probe-file audit-log-file) "Audit log file should be created.")
     (let ((main-content (uiop:read-file-string main-log-file))
-            (debug-content (uiop:read-file-string debug-log-file))
-            (audit-content (uiop:read-file-string audit-log-file)))
-        (fiveam:is-true (search "[MAIN]" main-content) "Main log should have [MAIN] prefix.")
-        (fiveam:is-true (search "[SEC-LOG]" debug-content) "Debug log should have [SEC-LOG] prefix.")
-        (fiveam:is-true (search "[AUDIT]" audit-content) "Audit log should have [AUDIT] prefix.")))
-    (format t "Messages written to date-prefixed three-streams-main.log, debug.log, and audit.log~%")))
+          (debug-content (uiop:read-file-string debug-log-file))
+          (audit-content (uiop:read-file-string audit-log-file)))
+      (fiveam:is-true (search "[MAIN]" main-content) "Main log should have [MAIN] prefix.")
+      (fiveam:is-true (search "[SEC-LOG]" debug-content) "Debug log should have [SEC-LOG] prefix.")
+      (fiveam:is-true (search "[AUDIT]" audit-content) "Audit log should have [AUDIT] prefix.")))
+  (format t "Messages written to date-prefixed three-streams-main.log, debug.log, and audit.log~%"))
 
 ;; --- Test Case 4: Demonstrating append vs. replace ---
 (fiveam:test append-vs-replace-file-opening
