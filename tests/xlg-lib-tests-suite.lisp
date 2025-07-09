@@ -169,15 +169,17 @@
 ;; --- New Test Case: Nested WITH-OPEN-LOG-FILES with keyword reuse (expecting error) ---
 (fiveam:test nested-with-open-log-files-error-on-reuse
   (format t "~%--- Running New Test Case: Nested WITH-OPEN-LOG-FILES with Keyword Reuse (Expecting Error) ---~%")
-  (let ((outer-log-file "outer-nested-test.log"))
+  (let ((outer-log-file "outer-nested-test.log")
+        (inner-log-file "inner-nested-test.log")) ; Define inner-log-file here
     (when (probe-file outer-log-file) (delete-file outer-log-file))
+    (when (probe-file inner-log-file) (delete-file inner-log-file)) ; Explicit cleanup for inner file
 
     (xlg-lib:with-open-log-files ((:my-shared-log outer-log-file :replace)) ; Use keyword for stream
       (xlg-lib:xlg :my-shared-log "Message from outer scope before nested call.")
       (format t "Attempting to open nested log with same keyword (:MY-SHARED-LOG)...~%")
 
       (handler-case
-          (xlg-lib:with-open-log-files ((:my-shared-log "inner-nested-test.log" nil :replace)) ; This should error
+          (xlg-lib:with-open-log-files ((:my-shared-log inner-log-file nil :replace)) ; This should error
             ;; This line should NOT be reached if the error is signaled correctly
             (xlg-lib:xlg :my-shared-log "This message should never be logged by inner scope.")
             (fiveam:fail "Inner with-open-log-files did NOT signal an error as expected.")) ; Fail if no error
@@ -194,7 +196,7 @@
         (fiveam:is-true (search "Message from outer scope before nested call." content) "Outer log: first message present.")
         (fiveam:is-true (search "Message from outer scope after nested call attempt." content) "Outer log: second message present.")
         (fiveam:is-false (search "This message should never be logged" content) "Inner message should NOT be in outer log.")
-        (fiveam:is-false (probe-file "inner-nested-test.log") "Inner log file should NOT be created if error signaled early.")))))
+        (fiveam:is-false (probe-file inner-log-file) "Inner log file should NOT be created if error signaled early.")))))
 
 ;; Function to run all tests in the suite
 (defun run-xlg-tests ()
