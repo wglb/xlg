@@ -1,22 +1,22 @@
-;;; File: tests/suite.lisp
+;;; File: tests/xlg-lib-tests-suite.lisp
 ;;; Description: Contains the FiveAM test suite and individual test cases for the XLog library.
 
 ;; to run the tests, do
-; (asdf:load-system :xlg-tests)
-; (asdf:test-system :xlg-tests)
+; (asdf:load-system :xlg-lib-tests)
+; (asdf:test-system :xlg-lib-tests)
 
 
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
 
-;; Ensure the xlg-tests package is available
-(in-package #:xlg-lib-tests)
+;; Ensure the xlg-lib-tests package is available
+(in-package #:xlg-lib-tests) ; Corrected package name
 
 ;; Define the main test suite for XLog
-(fiveam:def-suite xlg-tests-suite
+(fiveam:def-suite xlg-lib-tests-suite ; Suite name corrected
   :description "Main test suite for the XLog logging library.")
 
 ;; Set this suite as the current one for subsequent test definitions
-(fiveam:in-suite xlg-tests-suite)
+(fiveam:in-suite xlg-lib-tests-suite)
 
 ;; --- Test Case 1: Logging to a single stream with YMD date prefix for filename and microsecond line prefix ---
 (fiveam:test single-stream-logging-with-prefixes
@@ -135,23 +135,17 @@
     (format t "Check 'append-test.log' (should have two lines) and 'replace-test.log' (should have one line).~%")))
 
 ;; --- Test Case 5: Demonstrating explicit flushing ---
-;; This test case was removed as the XLG macro now automatically flushes.
-;; If explicit flushing is still desired, a separate FLUSH-ALL-LOG-STREAMS function
-;; can be called directly.
 (fiveam:test explicit-flush-demonstration
   (format t "~%--- Running Test Case 5: Explicit Flush Demonstration ---~%")
   (let ((flush-test-file "flush-test.log"))
     (when (probe-file flush-test-file) (delete-file flush-test-file))
 
-    (xlg-lib:with-open-log-files ((:flush-log flush-test-file :replace))
+    (xlg-lib:with-open-log-files ((:flush-log flush-test-file :replace)) ; Use :replace to start fresh
       (xlg-lib:xlg :flush-log "First message, should be written immediately by XLG.")
       (xlg-lib:xlg :flush-log "Second message, also written by XLG.")
 
       (format t "Writing a message without XLG, then flushing all streams manually.~%")
-      ;; In the current XLG design, XLG itself flushes.
-      ;; To test explicit flushing, we'd need to write directly to the stream
-      ;; without XLG, then call FLUSH-ALL-LOG-STREAMS.
-      ;; For now, this part is illustrative.
+      ;; Write directly to the stream without XLG's auto-flush
       (let ((stream (gethash :flush-log xlg-lib::*log-streams*)))
         (when (streamp stream)
           (format stream "This message is written directly to the stream, not via XLG.~%")
@@ -160,7 +154,8 @@
       (xlg-lib:flush-all-log-streams) ; Call the explicit flush function
       (format t "All log streams explicitly flushed.~%")
 
-      (xlg-lib:xlg :flush-log "Third message, written after manual flush."))
+      (xlg-lib:xlg :flush-log "Third message, written after manual flush.")
+      )
     (fiveam:is-true (probe-file flush-test-file) "Flush test file should be created.")
     (let ((content (uiop:read-file-string flush-test-file)))
       (fiveam:is-true (search "First message" content) "First message should be in log.")
@@ -203,8 +198,8 @@
 
 ;; Function to run all tests in the suite
 (defun run-xlg-tests ()
-  "Runs all tests defined in the XLG-TESTS-SUITE."
+  "Runs all tests defined in the XLG-LIB-TESTS-SUITE."
   (let ((*default-pathname-defaults* #P"")) ; Ensure tests run in current directory
-    (fiveam:run! 'xlg-tests-suite)))
+    (fiveam:run! 'xlg-lib-tests-suite)))
 
-(format t "~%--- All test cases defined. Use (asdf:test-system :xlg-tests) to run them. ---~%")
+(format t "~%--- All test cases defined. Use (asdf:test-system :xlg-lib-tests) to run them. ---~%")
