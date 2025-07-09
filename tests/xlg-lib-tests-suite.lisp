@@ -88,12 +88,12 @@
     (fiveam:is-true (probe-file debug-log-file) "Debug log file should be created.")
     (fiveam:is-true (probe-file audit-log-file) "Audit log file should be created.")
     (let ((main-content (uiop:read-file-string main-log-file))
-          (debug-content (uiop:read-file-string debug-log-file))
-          (audit-content (uiop:read-file-string audit-log-file)))
-      (fiveam:is-true (search "[MAIN]" main-content) "Main log should have [MAIN] prefix.")
-      (fiveam:is-true (search "[SEC-LOG]" debug-content) "Debug log should have [SEC-LOG] prefix.")
-      (fiveam:is-true (search "[AUDIT]" audit-content) "Audit log should have [AUDIT] prefix.")))
-  (format t "Messages written to date-prefixed three-streams-main.log, debug.log, and audit.log~%"))
+            (debug-content (uiop:read-file-string debug-log-file))
+            (audit-content (uiop:read-file-string audit-log-file)))
+        (fiveam:is-true (search "[MAIN]" main-content) "Main log should have [MAIN] prefix.")
+        (fiveam:is-true (search "[SEC-LOG]" debug-content) "Debug log should have [SEC-LOG] prefix.")
+        (fiveam:is-true (search "[AUDIT]" audit-content) "Audit log should have [AUDIT] prefix.")))
+    (format t "Messages written to date-prefixed three-streams-main.log, debug.log, and audit.log~%"))
 
 ;; --- Test Case 4: Demonstrating append vs. replace ---
 (fiveam:test append-vs-replace-file-opening
@@ -170,11 +170,16 @@
       (xlg-lib:xlg :my-shared-log "Message from outer scope before nested call.")
       (format t "Attempting to open nested log with same keyword (:MY-SHARED-LOG)...~%")
 
-      (fiveam:signals error
-        (xlg-lib:with-open-log-files ((:my-shared-log "inner-nested-test.log" nil :replace))
-          (xlg-lib:xlg :my-shared-log "This message should never be logged by inner scope."))) ; This closes the inner xlg-lib:with-open-log-files.
+      (handler-case
+          (xlg-lib:with-open-log-files ((:my-shared-log "inner-nested-test.log" nil :replace))
+            ;; This line should NOT be reached if the error is signaled correctly
+            (xlg-lib:xlg :my-shared-log "This message should never be logged by inner scope.")
+            (fiveam:fail "Inner with-open-log-files did NOT signal an error as expected.")) ; Fail if no error
+        (error (c)
+          (format t "Caught expected error: ~a~%" c)
+          (fiveam:pass "Successfully caught expected error for keyword reuse."))) ; Pass if error caught
 
-      (format t "Successfully caught error for keyword reuse. Verifying outer log still works.~%")
+      (format t "Verifying outer log still works after error.~%")
       (xlg-lib:xlg :my-shared-log "Message from outer scope after nested call attempt.")
 
       (fiveam:is-true (probe-file outer-log-file) "Outer log file should still exist.")
@@ -182,8 +187,7 @@
         (fiveam:is-true (search "Message from outer scope before nested call." content) "Outer log: first message present.")
         (fiveam:is-true (search "Message from outer scope after nested call attempt." content) "Outer log: second message present.")
         (fiveam:is-false (search "This message should never be logged" content) "Inner message should NOT be in outer log.")
-        (fiveam:is-false (probe-file "inner-nested-test.log") "Inner log file should NOT be created if error signaled early.")))) ; This closes the outer let.
-  ) ; <--- This is the final, missing closing parenthesis for the fiveam:test itself.
+        (fiveam:is-false (probe-file "inner-nested-test.log") "Inner log file should NOT be created if error signaled early.")))))
 
 ;; Function to run all tests in the suite
 (defun run-xlg-tests ()

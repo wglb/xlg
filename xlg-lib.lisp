@@ -88,7 +88,7 @@
 ;;;          Optionally echoes the output to standard output.
 ;;; It looks up the stream using a keyword from the global *LOG-STREAMS* hash table.
 ;;;
-;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args &key line-prefix echo-to-stdout)
+;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args &key line-prefix stdout)
 ;;;   - log-keyword: A keyword (e.g., `:APP-LOG`, `:ERROR-LOG`) that identifies
 ;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
@@ -117,8 +117,7 @@
                (if (and (consp temp-args) (eq (car temp-args) :stdout)) ; Parse new keyword
                    (progn
                      (setf ,echo-to-stdout-g (cadr temp-args))
-                     (setf temp-args (cddr temp-args))
-					 (format t "xlg: temp args now set to ~s~%" temp-args)) ; Skip key and value
+                     (setf temp-args (cddr temp-args))) ; Skip key and value
                    (progn
                      (push (car temp-args) ,format-args-g)
                      (setf temp-args (cdr temp-args))))))
@@ -199,6 +198,7 @@
           ;; Form to close the file and remove from *LOG-STREAMS*
           (push `(let ((stream (gethash ,keyword-name *log-streams*)))
                    (when (and stream (streamp stream))
+                     (format t "WITH-OPEN-LOG-FILES: Closing stream ~s for keyword ~s~%" stream ,keyword-name) ; Add trace
                      (close stream)
                      (remhash ,keyword-name *log-streams*)))
                 cleanup-forms))))
