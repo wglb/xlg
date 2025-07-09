@@ -28,13 +28,13 @@
       ;; Line prefixed with microsecond timestamp, no additional string
       (xlg-lib:xlg :single-log "This is the first message to a single log stream with date prefix." :line-prefix "") ; Use xlg-lib:xlg
       ;; Line prefixed with microsecond timestamp and a custom string
-      (xlg-lib:xlg :single-log "Another message for the single log stream: ~a" "Hello, Microseconds!" :line-prefix "[SEC-LOG] ")) ; Use xlg-lib:xlg
+      (xlg-lib:xlg :single-log "Another message for the single log stream: ~a" "Hello, Microseconds!" :line-prefix "[SEC-LOG] ") ; Use xlg-lib:xlg
     (fiveam:is-true (probe-file log-file) "Log file 'single-stream.log' should be created.")
     (let ((content (uiop:read-file-string log-file)))
       (fiveam:is-true (search "This is the first message" content) "First message should be in log.")
       (fiveam:is-true (search "Another message for the single log stream" content) "Second message should be in log.")
       (fiveam:is-true (search "[SEC-LOG]" content) "Second message should have [SEC-LOG] prefix."))
-    (format t "Messages written to date-prefixed single-stream.log~%")))
+    (format t "Messages written to date-prefixed single-stream.log~%"))))
 
 ;; --- Test Case 2: Logging to two streams, one with YMD prefix, one without, and varied line prefixes ---
 (fiveam:test two-stream-logging-varied-prefixes
@@ -184,6 +184,7 @@
 
       (fiveam:is-true (probe-file outer-log-file) "Outer log file should still exist.")
       (let ((content (uiop:read-file-string outer-log-file)))
+        (format t "nwolfeor: file is ~s~%------------------~%" content)
         (fiveam:is-true (search "Message from outer scope before nested call." content) "Outer log: first message present.")
         (fiveam:is-true (search "Message from outer scope after nested call attempt." content) "Outer log: second message present.")
         (fiveam:is-false (search "This message should never be logged" content) "Inner message should NOT be in outer log.")
