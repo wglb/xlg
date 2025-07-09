@@ -1,8 +1,8 @@
-;;; File: xlg-lib.lisp
+;;; File: xlg.lisp
 ;;; Description: Contains the core logic for the XLog logging library,
 ;;; including the WITH-OPEN-LOG-FILES and XLG macros, and stream flushing utilities.
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
-(in-package #:xlg-lib) ; Package name changed to :xlg-lib
+(in-package #:xlg-lib)
 
 ;; Calculate the offset from 1900-01-01 to 1970-01-01 (Unix epoch)
 ;; This is needed for SBCL's SB-EXT:GET-TIME-OF-DAY which returns seconds since Unix epoch,
@@ -42,7 +42,7 @@
                      y m d h))
       (:ym (format nil "~4,'0D-~2,'0D_"
                    y m))
-      (:ymd (format nil "~4,'00D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
+      (:ymd (format nil "~4,'0D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
                     y m d))
       ;; If 'dates' is non-NIL but not one of the specific keywords,
       ;; assume the default YMD_ format.
@@ -84,57 +84,43 @@
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
 ;;;          optionally prefixed with a date/time string including microseconds.
-;;;          Optionally echoes the output to standard output.
 ;;; It looks up the stream using a keyword from the global *LOG-STREAMS* hash table.
 ;;;
-;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args &key line-prefix stdout)
+;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args)
 ;;;   - log-keyword: A keyword (e.g., `:APP-LOG`, `:ERROR-LOG`) that identifies
 ;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
 ;;;   - format-and-keyword-args: Remaining arguments, which may include format arguments
-;;;     and the keyword arguments `:line-prefix` and `:stdout`.
-;;;   - :line-prefix: An optional string to append after the microsecond timestamp
-;;;     for the log entry line. If NIL, no timestamp is added.
-;;;   - :stdout: If true, the formatted log message will also be printed
-;;;     to *standard-output*.
+;;;     and the keyword argument `:line-prefix` followed by its value.
 ;;;
 ;;; Returns: (No explicit return value, writes to stream)
-(defmacro xlg (log-keyword format-string &rest args)
-  (let ((g-log-keyword (gensym "LOG-KEYWORD"))
-        (g-format-string (gensym "FORMAT-STRING"))
-        (g-line-prefix (gensym "LINE-PREFIX"))
-        (g-stdout (gensym "STDOUT"))
-        (g-format-args (gensym "FORMAT-ARGS")))
-    `(let* ((,g-log-keyword ,log-keyword)
-            (,g-format-string ,format-string)
-            (,g-line-prefix nil)
-            (,g-stdout nil)
-            (,g-format-args nil))
-       ;; Parse the arguments at runtime (inside the generated code)
-       (let ((temp-args (list ,@args))) ; Evaluate args into a list at runtime
+(defmacro xlg (log-keyword format-string &rest all-args)
+  (let ((line-prefix-g (gensym "LINE-PREFIX"))
+        (format-args-g (gensym "FORMAT-ARGS")))
+    ;; Manually parse the arguments to separate format arguments from :line-prefix
+    `(let (,line-prefix-g
+           (,format-args-g nil))
+       (let ((temp-args ',all-args))
          (loop while temp-args do
-           (let ((current (pop temp-args)))
-             (cond ((eq current :line-prefix)
-                    (setf ,g-line-prefix (pop temp-args)))
-                   ((eq current :stdout)
-                    (setf ,g-stdout (pop temp-args)))
-                   (t
-                    (push current ,g-format-args)))))
-         (setf ,g-format-args (nreverse ,g-format-args)))
+           (if (and (consp temp-args) (eq (car temp-args) :line-prefix))
+               (progn
+                 (setf ,line-prefix-g (cadr temp-args))
+                 (setf temp-args (cddr temp-args))) ; Skip key and value
+               (progn
+                 (push (car temp-args) ,format-args-g)
+                 (setf temp-args (cdr temp-args)))))
+         (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
 
-       (let* ((stream (gethash ,g-log-keyword *log-streams*))
-              (prefix-string (if ,g-line-prefix
-                                 (formatted-current-time-micro ,g-line-prefix)
-                                 ""))
-              (final-format-string (concatenate 'string prefix-string ,g-format-string)))
-         (when (streamp stream)
-           (apply #'format stream final-format-string ,@g-format-args)
-           (terpri stream)
-           (finish-output stream))
-
-         (when ,g-stdout
-           (apply #'format *standard-output* final-format-string ,@g-format-args)
-           (terpri *standard-output*))))))
+       ;; Retrieve the stream from the global *LOG-STREAMS* hash table
+       (let ((stream (gethash ,log-keyword *log-streams*)))
+         (when (streamp stream) ; Check if a valid stream was found
+           (let* ((prefix-string (if ,line-prefix-g
+                                     (formatted-current-time-micro ,line-prefix-g)
+                                     ""))
+                  (final-format-string (concatenate 'string prefix-string ,format-string)))
+             (apply #'format stream final-format-string ,format-args-g)
+             (terpri stream)
+             (finish-output stream)))))))
 
 ;;; Macro: WITH-OPEN-LOG-FILES
 ;;; Purpose: Opens multiple log files, stores them in the *LOG-STREAMS* hash table
@@ -159,64 +145,48 @@
 (defmacro with-open-log-files (log-streams &body body)
   "Opens multiple log files, stores them in *LOG-STREAMS* under specified keywords,
    executes a body of code, and ensures files are closed and removed from *LOG-STREAMS*
-   using unwind-protect. Optionally prefixes filenames with a date/time string.
-   Signals an error if a log keyword is already in use by an enclosing WITH-OPEN-LOG-FILES block."
-  (let ((let-bindings '()) ; For lexical variables (new-stream-var, original-hash-value-var)
-        (progn-body-forms '()) ; Forms to execute in the main body (checks, setf gethash)
-        (unwind-protect-cleanup-forms '())) ; Forms for cleanup
+   using unwind-protect. Optionally prefixes filenames with a date/time string."
+  (let ((open-forms '())     ; Forms to open files and store in hash table
+        (cleanup-forms '())) ; Forms to close files and remove from hash table
 
+    ;; Process each stream specification
     (dolist (stream-spec log-streams)
       (destructuring-bind (keyword-name file-path &optional date-prefix if-exists-option) stream-spec
         (unless (keywordp keyword-name)
           (error "WITH-OPEN-LOG-FILES: Stream identifier must be a keyword, but got ~S" keyword-name))
 
-        (let ((new-stream-var (gensym (string-upcase (symbol-name keyword-name))))
-              (original-hash-value-var (gensym "ORIG-HASH-VAL")))
+        (let* ((final-file-path (if date-prefix
+                                    `(concatenate 'string (dates-ymd ,date-prefix) ,file-path)
+                                    file-path))
+               (open-if-exists (cond ((eq if-exists-option :replace) :supersede)
+                                     (t :append)))) ; Default to :append
 
-          ;; Add lexical bindings for the new stream and its original hash table value
-          (push `(,new-stream-var nil) let-bindings) ; New stream will be set later
-          (push `(,original-hash-value-var (gethash ,keyword-name *log-streams*)) let-bindings)
+          ;; Form to open the file and store in *LOG-STREAMS*
+          (push `(setf (gethash ,keyword-name *log-streams*)
+                       (open ,final-file-path
+                             :direction :output
+                             :if-exists ,open-if-exists
+                             :if-does-not-exist :create))
+                open-forms)
 
-          ;; --- Setup forms for the main progn body ---
-          ;; 1. Runtime check for existing keyword usage
-          (push `(when (gethash ,keyword-name *log-streams*)
-                   (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block.
-                           Please use a unique keyword for nested log streams or ensure no overlap."
-                          ,keyword-name))
-                progn-body-forms)
+          ;; Form to close the file and remove from *LOG-STREAMS*
+          (push `(let ((stream (gethash ,keyword-name *log-streams*)))
+                   (when (and stream (streamp stream))
+                     (close stream)
+                     (remhash ,keyword-name *log-streams*)))
+                cleanup-forms))))
 
-          ;; 2. Open the new stream and assign to lexical variable
-          (let* ((date-prefix-string-form (if date-prefix `(xlg-lib::dates-ymd ,date-prefix) ""))
-                 (open-if-exists (cond ((eq if-exists-option :replace) :supersede) (t :append))))
-            (push `(setf ,new-stream-var (open (concatenate 'string ,date-prefix-string-form ,file-path)
-                                               :direction :output
-                                               :if-exists ,open-if-exists
-                                               :if-does-not-exist :create))
-                  progn-body-forms))
+    ;; Reverse lists to maintain original order
+    (setf open-forms (nreverse open-forms))
+    (setf cleanup-forms (nreverse cleanup-forms))
 
-          ;; 3. Put the new stream into the global hash table
-          (push `(setf (gethash ,keyword-name *log-streams*) ,new-stream-var)
-                progn-body-forms)
+    ;; Construct the final macro expansion
+    `(unwind-protect
+          (progn
+            ;; Execute all open forms
+            ,@open-forms
+            ;; The main body of code that uses the opened log streams
+            ,@body)
+       ;; The cleanup forms, executed when the `unwind-protect` block is exited
+       ,@cleanup-forms)))
 
-          ;; --- Cleanup forms for unwind-protect ---
-          ;; 1. Close the stream opened by this instance (if it was successfully opened)
-          (push `(when (and ,new-stream-var (streamp ,new-stream-var))
-                   (format t "WITH-OPEN-LOG-FILES: Closing stream ~s for keyword ~s~%" ,new-stream-var ,keyword-name)
-                   (close ,new-stream-var))
-                unwind-protect-cleanup-forms)
-
-          ;; 2. Restore the original hash table value for this keyword
-          (push `(setf (gethash ,keyword-name *log-streams*) ,original-hash-value-var)
-                unwind-protect-cleanup-forms))))
-
-    (setf let-bindings (nreverse let-bindings))
-    (setf progn-body-forms (nreverse progn-body-forms))
-    (setf unwind-protect-cleanup-forms (nreverse unwind-protect-cleanup-forms))
-
-    `(let ,let-bindings
-       (unwind-protect
-            (progn
-              ,@progn-body-forms
-              ,@body)
-         (progn
-           ,@unwind-protect-cleanup-forms)))))
