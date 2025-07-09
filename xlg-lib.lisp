@@ -1,3 +1,4 @@
+
 ;;; File: xlg-lib.lisp
 ;;; Description: Contains the core logic for the XLog logging library,
 ;;; including the WITH-OPEN-LOG-FILES and XLG macros, and stream flushing utilities.
@@ -77,7 +78,6 @@
   (maphash (lambda (key stream)
              (declare (ignore key)) ; Key is not used here
              (when (streamp stream)
-			   (format t "Finishing output stream ~s~%" stream)
                (finish-output stream))
 			 (finish-output))
            *log-streams*))
@@ -164,55 +164,62 @@
    executes a body of code, and ensures files are closed and removed from *LOG-STREAMS*
    using unwind-protect. Optionally prefixes filenames with a date/time string.
    Signals an error if a log keyword is already in use by an enclosing WITH-OPEN-LOG-FILES block."
-  (let ((open-forms '())     ; Forms to open files and store in hash table
-        (cleanup-forms '())) ; Forms to close files and remove from hash table
+  (let ((let-bindings '()) ; For lexical variables (new-stream-var, original-hash-value-var)
+        (progn-body-forms '()) ; Forms to execute in the main body (checks, setf gethash)
+        (unwind-protect-cleanup-forms '())) ; Forms for cleanup
 
-    ;; Process each stream specification
     (dolist (stream-spec log-streams)
       (destructuring-bind (keyword-name file-path &optional date-prefix if-exists-option) stream-spec
         (unless (keywordp keyword-name)
           (error "WITH-OPEN-LOG-FILES: Stream identifier must be a keyword, but got ~S" keyword-name))
 
-        ;; --- NEW CHECK FOR NESTING SAFETY - NOW AT RUNTIME ---
-        (push `(when (gethash ,keyword-name *log-streams*)
-                 (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block.
-                         Please use a unique keyword for nested log streams or ensure no overlap."
-                        ,keyword-name))
-              open-forms) ; Pushed to open-forms, so it runs at runtime
-        ;; --- END NEW CHECK ---
+        (let ((new-stream-var (gensym (string-upcase (symbol-name keyword-name))))
+              (original-hash-value-var (gensym "ORIG-HASH-VAL")))
 
-        (let* ((date-prefix-string-form (if date-prefix
-                                            `(xlg-lib::dates-ymd ,date-prefix) ; Form to evaluate at runtime
-                                            "")) ; Empty string if no prefix
-               (open-if-exists (cond ((eq if-exists-option :replace) :supersede)
-                                     (t :append)))) ; Default to :append
+          ;; Add lexical bindings for the new stream and its original hash table value
+          (push `(,new-stream-var nil) let-bindings) ; New stream will be set later
+          (push `(,original-hash-value-var (gethash ,keyword-name *log-streams*)) let-bindings)
 
-          ;; Form to open the file and store in *LOG-STREAMS*
-          (push `(setf (gethash ,keyword-name *log-streams*)
-                       (open (concatenate 'string ,date-prefix-string-form ,file-path)
-                             :direction :output
-                             :if-exists ,open-if-exists
-                             :if-does-not-exist :create))
-                open-forms)
+          ;; --- Setup forms for the main progn body ---
+          ;; 1. Runtime check for existing keyword usage
+          (push `(when (gethash ,keyword-name *log-streams*)
+                   (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block.
+                           Please use a unique keyword for nested log streams or ensure no overlap."
+                          ,keyword-name))
+                progn-body-forms)
 
-          ;; Form to close the file and remove from *LOG-STREAMS*
-          (push `(let ((stream (gethash ,keyword-name *log-streams*)))
-                   (when (and stream (streamp stream))
-                     (format t "WITH-OPEN-LOG-FILES: Closing stream ~s for keyword ~s~%" stream ,keyword-name) ; Add trace
-                     (close stream)
-                     (remhash ,keyword-name *log-streams*)))
-                cleanup-forms))))
+          ;; 2. Open the new stream and assign to lexical variable
+          (let* ((date-prefix-string-form (if date-prefix `(xlg-lib::dates-ymd ,date-prefix) ""))
+                 (open-if-exists (cond ((eq if-exists-option :replace) :supersede) (t :append))))
+            (push `(setf ,new-stream-var (open (concatenate 'string ,date-prefix-string-form ,file-path)
+                                               :direction :output
+                                               :if-exists ,open-if-exists
+                                               :if-does-not-exist :create))
+                  progn-body-forms))
 
-    ;; Reverse lists to maintain original order (open-forms will now have checks first, then opens)
-    (setf open-forms (nreverse open-forms))
-    (setf cleanup-forms (nreverse cleanup-forms))
+          ;; 3. Put the new stream into the global hash table
+          (push `(setf (gethash ,keyword-name *log-streams*) ,new-stream-var)
+                progn-body-forms)
 
-    ;; Construct the final macro expansion
-    `(unwind-protect
-          (progn
-            ;; Execute all open forms (including the runtime checks)
-            ,@open-forms
-            ;; The main body of code that uses the opened log streams
-            ,@body)
-       ;; The cleanup forms, executed when the `unwind-protect` block is exited
-       ,@cleanup-forms)))
+          ;; --- Cleanup forms for unwind-protect ---
+          ;; 1. Close the stream opened by this instance (if it was successfully opened)
+          (push `(when (and ,new-stream-var (streamp ,new-stream-var))
+                   (format t "WITH-OPEN-LOG-FILES: Closing stream ~s for keyword ~s~%" ,new-stream-var ,keyword-name)
+                   (close ,new-stream-var))
+                unwind-protect-cleanup-forms)
+
+          ;; 2. Restore the original hash table value for this keyword
+          (push `(setf (gethash ,keyword-name *log-streams*) ,original-hash-value-var)
+                unwind-protect-cleanup-forms))))
+
+    (setf let-bindings (nreverse let-bindings))
+    (setf progn-body-forms (nreverse progn-body-forms))
+    (setf unwind-protect-cleanup-forms (nreverse unwind-protect-cleanup-forms))
+
+    `(let ,let-bindings
+       (unwind-protect
+            (progn
+              ,@progn-body-forms
+              ,@body)
+         (progn
+           ,@unwind-protect-cleanup-forms)))))
