@@ -99,43 +99,41 @@
 ;;;     to *standard-output*.
 ;;;
 ;;; Returns: (No explicit return value, writes to stream)
-(defmacro xlg (log-keyword format-string &rest all-args)
-  (let ((line-prefix-g (gensym "LINE-PREFIX"))
-        (echo-to-stdout-g (gensym "ECHO-TO-STDOUT")) ; New gensym for echo option
-        (format-args-g (gensym "FORMAT-ARGS")))
-    ;; Manually parse the arguments to separate format arguments and keyword arguments
-    `(let (,line-prefix-g
-           ,echo-to-stdout-g ; Initialize new gensym
-           (,format-args-g nil))
-       (let ((temp-args ',all-args))
+(defmacro xlg (log-keyword format-string &rest args)
+  (let ((g-log-keyword (gensym "LOG-KEYWORD"))
+        (g-format-string (gensym "FORMAT-STRING"))
+        (g-line-prefix (gensym "LINE-PREFIX"))
+        (g-stdout (gensym "STDOUT"))
+        (g-format-args (gensym "FORMAT-ARGS")))
+    `(let* ((,g-log-keyword ,log-keyword)
+            (,g-format-string ,format-string)
+            (,g-line-prefix nil)
+            (,g-stdout nil)
+            (,g-format-args nil))
+       ;; Parse the arguments at runtime (inside the generated code)
+       (let ((temp-args (list ,@args))) ; Evaluate args into a list at runtime
          (loop while temp-args do
-           (if (and (consp temp-args) (eq (car temp-args) :line-prefix))
-               (progn
-                 (setf ,line-prefix-g (cadr temp-args))
-                 (setf temp-args (cddr temp-args))) ; Skip key and value
-               (if (and (consp temp-args) (eq (car temp-args) :stdout)) ; Parse new keyword
-                   (progn
-                     (setf ,echo-to-stdout-g (cadr temp-args))
-                     (setf temp-args (cddr temp-args))) ; Skip key and value
-                   (progn
-                     (push (car temp-args) ,format-args-g)
-                     (setf temp-args (cdr temp-args))))))
-         (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
+           (let ((current (pop temp-args)))
+             (cond ((eq current :line-prefix)
+                    (setf ,g-line-prefix (pop temp-args)))
+                   ((eq current :stdout)
+                    (setf ,g-stdout (pop temp-args)))
+                   (t
+                    (push current ,g-format-args)))))
+         (setf ,g-format-args (nreverse ,g-format-args)))
 
-       ;; Retrieve the stream from the global *LOG-STREAMS* hash table
-       (let* ((stream (gethash ,log-keyword *log-streams*))
-              (prefix-string (if ,line-prefix-g
-                                 (formatted-current-time-micro ,line-prefix-g)
+       (let* ((stream (gethash ,g-log-keyword *log-streams*))
+              (prefix-string (if ,g-line-prefix
+                                 (formatted-current-time-micro ,g-line-prefix)
                                  ""))
-              (final-format-string (concatenate 'string prefix-string ,format-string)))
-         (when (streamp stream) ; Check if a valid stream was found
-           (apply #'format stream final-format-string ,format-args-g)
+              (final-format-string (concatenate 'string prefix-string ,g-format-string)))
+         (when (streamp stream)
+           (apply #'format stream final-format-string ,@g-format-args)
            (terpri stream)
            (finish-output stream))
 
-         ;; Echo to *standard-output* if requested
-         (when ,echo-to-stdout-g
-           (apply #'format *standard-output* final-format-string ,format-args-g)
+         (when ,g-stdout
+           (apply #'format *standard-output* final-format-string ,@g-format-args)
            (terpri *standard-output*))))))
 
 ;;; Macro: WITH-OPEN-LOG-FILES
