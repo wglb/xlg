@@ -170,10 +170,10 @@
                              Please use a unique keyword for nested log streams or ensure no overlap."
                             ,keyword-name))
 
-                   ;; 2. Open the new stream and assign to lexical variable - ONLY if check passes
-                   (let* ((date-prefix-string-form (if ,date-prefix `(xlg-lib::dates-ymd ,date-prefix) ""))
+                   ;; 2. Evaluate date prefix string at runtime and then open the file
+                   (let* ((actual-date-prefix-string (if ,date-prefix (xlg-lib::dates-ymd ,date-prefix) "")) ; Evaluate at runtime
                           (open-if-exists (cond ((eq ,if-exists-option :replace) :supersede) (t :append))))
-                     (setf ,new-stream-var (open (concatenate 'string ,date-prefix-string-form ,file-path)
+                     (setf ,new-stream-var (open (concatenate 'string actual-date-prefix-string ,file-path)
                                                 :direction :output
                                                 :if-exists open-if-exists
                                                 :if-does-not-exist :create)))
@@ -208,4 +208,3 @@
          ;; The cleanup forms, executed when the `unwind-protect` block is exited
          (progn ; Wrap cleanup forms in a progn to ensure sequential execution
            ,@unwind-protect-cleanup-forms)))))
-
