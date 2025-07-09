@@ -1,8 +1,8 @@
-;;; File: xlg.lisp
+;;; File: xlg-lib.lisp
 ;;; Description: Contains the core logic for the XLog logging library,
 ;;; including the WITH-OPEN-LOG-FILES and XLG macros, and stream flushing utilities.
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
-(in-package #:xlg-lib)
+(in-package #:xlg-lib) ; Corrected package name to :xlg-lib
 
 ;; Calculate the offset from 1900-01-01 to 1970-01-01 (Unix epoch)
 ;; This is needed for SBCL's SB-EXT:GET-TIME-OF-DAY which returns seconds since Unix epoch,
@@ -78,8 +78,7 @@
              (declare (ignore key)) ; Key is not used here
              (when (streamp stream)
                (finish-output stream)))
-           *log-streams*)
-  (finish-output)) ; Added to flush *standard-output* as well
+           *log-streams*))
 
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
@@ -189,4 +188,3 @@
             ,@body)
        ;; The cleanup forms, executed when the `unwind-protect` block is exited
        ,@cleanup-forms)))
-
