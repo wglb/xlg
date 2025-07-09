@@ -1,4 +1,4 @@
-;;; File: xlg-lib.lisp
+ ;;; File: xlg-lib.lisp
 ;;; Description: Contains the core logic for the XLog logging library,
 ;;; including the WITH-OPEN-LOG-FILES and XLG macros, and stream flushing utilities.
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
@@ -82,7 +82,8 @@
 
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
-;;;          optionally prefixed with a date/time string including microseconds.
+;;;          optionally prefixed with a date/time string including microseconds,
+;;;          and optionally to *standard-output*.
 ;;; It looks up the stream using a keyword from the global *LOG-STREAMS* hash table.
 ;;;
 ;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args)
@@ -90,36 +91,50 @@
 ;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
 ;;;   - format-and-keyword-args: Remaining arguments, which may include format arguments
-;;;     and the keyword argument `:line-prefix` followed by its value.
+;;;     and the keyword arguments `:line-prefix` followed by its value, and `:to-stdout`.
 ;;;
 ;;; Returns: (No explicit return value, writes to stream)
 (defmacro xlg (log-keyword format-string &rest all-args)
   (let ((line-prefix-g (gensym "LINE-PREFIX"))
-        (format-args-g (gensym "FORMAT-ARGS")))
+        (format-args-g (gensym "FORMAT-ARGS"))
+        (to-stdout-g (gensym "TO-STDOUT"))) ; New gensym for :to-stdout flag
     `(let (,line-prefix-g
-           (,format-args-g nil))
-       ;; Parse the arguments at runtime (inside the generated code)
+           (,format-args-g nil)
+           (,to-stdout-g nil)) ; Initialize to NIL
+       ;; Manually parse the arguments to separate format arguments from keywords
        (let ((temp-args (list ,@all-args))) ; Correctly capture runtime values
          (loop while temp-args do
            (if (and (consp temp-args) (eq (car temp-args) :line-prefix))
                (progn
                  (setf ,line-prefix-g (cadr temp-args))
                  (setf temp-args (cddr temp-args))) ; Skip key and value
-               (progn
-                 (push (car temp-args) ,format-args-g)
-                 (setf temp-args (cdr temp-args)))))
+               (if (and (consp temp-args) (eq (car temp-args) :to-stdout)) ; Check for :to-stdout
+                   (progn
+                     (setf ,to-stdout-g t) ; Set flag to T
+                     (setf temp-args (cdr temp-args))) ; Skip only the keyword
+                   (progn
+                     (push (car temp-args) ,format-args-g)
+                     (setf temp-args (cdr temp-args))))))
          (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
 
        ;; Retrieve the stream from the global *LOG-STREAMS* hash table
        (let ((stream (gethash ,log-keyword *log-streams*))) ; log-keyword is already a keyword
-         (when (streamp stream) ; Check if a valid stream was found
-           (let* ((prefix-string (if ,line-prefix-g
-                                     (xlg-lib::formatted-current-time-micro ,line-prefix-g) ; Ensure package prefix
-                                     ""))
-                  (final-format-string (concatenate 'string prefix-string ,format-string)))
+         (let* ((prefix-string (if ,line-prefix-g
+                                   (xlg-lib::formatted-current-time-micro ,line-prefix-g) ; Ensure package prefix
+                                   ""))
+                (final-format-string (concatenate 'string prefix-string ,format-string)))
+
+           ;; Log to file if stream is valid
+           (when (streamp stream)
              (apply #'format stream final-format-string ,format-args-g)
              (terpri stream)
-             (finish-output stream)))))))
+             (finish-output stream))
+
+           ;; Log to *standard-output* if :to-stdout flag is true
+           (when ,to-stdout-g
+             (apply #'format *standard-output* final-format-string ,format-args-g)
+             (terpri *standard-output*)
+             (finish-output *standard-output*)))))))
 
 ;;; Macro: WITH-OPEN-LOG-FILES
 ;;; Purpose: Opens multiple log files, stores them in the *LOG-STREAMS* hash table

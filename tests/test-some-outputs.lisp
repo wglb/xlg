@@ -1,0 +1,8 @@
+(defun test-some-outputs ()
+  (with-open-log-files ((:radio "the-radio.log")
+						(:stove "hot-stove-league"))
+	(xlg :radio "~a" "radio test")
+	(xlg :radio "~a" "radio test to stdout" :to-stdout)
+	(xlg :stove "~a" "bogon with prefix" :line-prefix "kithme")
+	(xlg :stove "~a" "bogon with prefix " :line-prefix "kithme" :to-stdout)
+	))
