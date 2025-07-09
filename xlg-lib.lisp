@@ -96,10 +96,10 @@
 (defmacro xlg (log-keyword format-string &rest all-args)
   (let ((line-prefix-g (gensym "LINE-PREFIX"))
         (format-args-g (gensym "FORMAT-ARGS")))
-    ;; Manually parse the arguments to separate format arguments from :line-prefix
     `(let (,line-prefix-g
            (,format-args-g nil))
-       (let ((temp-args ',all-args))
+       ;; Parse the arguments at runtime (inside the generated code)
+       (let ((temp-args (list ,@all-args))) ; Correctly capture runtime values
          (loop while temp-args do
            (if (and (consp temp-args) (eq (car temp-args) :line-prefix))
                (progn
@@ -111,10 +111,10 @@
          (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
 
        ;; Retrieve the stream from the global *LOG-STREAMS* hash table
-       (let ((stream (gethash ,log-keyword *log-streams*)))
+       (let ((stream (gethash ,log-keyword *log-streams*))) ; log-keyword is already a keyword
          (when (streamp stream) ; Check if a valid stream was found
            (let* ((prefix-string (if ,line-prefix-g
-                                     (formatted-current-time-micro ,line-prefix-g)
+                                     (xlg-lib::formatted-current-time-micro ,line-prefix-g) ; Ensure package prefix
                                      ""))
                   (final-format-string (concatenate 'string prefix-string ,format-string)))
              (apply #'format stream final-format-string ,format-args-g)
@@ -145,46 +145,63 @@
   "Opens multiple log files, stores them in *LOG-STREAMS* under specified keywords,
    executes a body of code, and ensures files are closed and removed from *LOG-STREAMS*
    using unwind-protect. Optionally prefixes filenames with a date/time string."
-  (let ((open-forms '())     ; Forms to open files and store in hash table
-        (cleanup-forms '())) ; Forms to close files and remove from hash table
+  (let ((stream-vars-bindings '()) ; List of (gensym-var nil) for the top-level let
+        (open-and-check-forms '())  ; Forms to be executed sequentially in the progn
+        (cleanup-forms '()))        ; Forms for cleanup
 
-    ;; Process each stream specification
     (dolist (stream-spec log-streams)
       (destructuring-bind (keyword-name file-path &optional date-prefix if-exists-option) stream-spec
         (unless (keywordp keyword-name)
           (error "WITH-OPEN-LOG-FILES: Stream identifier must be a keyword, but got ~S" keyword-name))
 
-        (let* ((final-file-path (if date-prefix
-                                    `(concatenate 'string (dates-ymd ,date-prefix) ,file-path)
-                                    file-path))
-               (open-if-exists (cond ((eq if-exists-option :replace) :supersede)
-                                     (t :append)))) ; Default to :append
+        (let ((g-stream-var (gensym (string-upcase (symbol-name keyword-name)))))
+          ;; Add to top-level let bindings for the generated code
+          (push `(,g-stream-var nil) stream-vars-bindings)
 
-          ;; Form to open the file and store in *LOG-STREAMS*
-          (push `(setf (gethash ,keyword-name *log-streams*)
-                       (open ,final-file-path
-                             :direction :output
-                             :if-exists ,open-if-exists
-                             :if-does-not-exist :create))
-                open-forms)
+          ;; Add forms for opening and checking
+          (push `(progn
+                   ;; Runtime check for existing keyword usage
+                   (when (gethash ,keyword-name *log-streams*)
+                     (error "Log keyword ~S is already in use by an enclosing WITH-OPEN-LOG-FILES block."
+                            ,keyword-name))
+                   ;; Construct final file path and open options
+                   (let* ((final-file-path (if ,date-prefix
+                                               (concatenate 'string (xlg-lib::dates-ymd ,date-prefix) ,file-path) ; Ensure package prefix
+                                               ,file-path))
+                          (open-if-exists (cond ((eq ,if-exists-option :replace) :supersede)
+                                                (t :append))))
+                     ;; Open the file and set the gensym'd stream variable
+                     (setf ,g-stream-var (open final-file-path
+                                               :direction :output
+                                               :if-exists open-if-exists
+                                               :if-does-not-exist :create))
+                     ;; Store the stream in the global hash table
+                     (setf (gethash ,keyword-name *log-streams*) ,g-stream-var)))
+                open-and-check-forms)
 
-          ;; Form to close the file and remove from *LOG-STREAMS*
-          (push `(let ((stream (gethash ,keyword-name *log-streams*)))
-                   (when (and stream (streamp stream))
-                     (close stream)
+          ;; Add cleanup forms
+          (push `(let ((stream-to-close ,g-stream-var)) ; Use the gensym'd variable for this specific stream
+                   (when (and stream-to-close
+                              (streamp stream-to-close)
+                              ;; Only remove if this specific stream is still associated with the keyword
+                              (eq stream-to-close (gethash ,keyword-name *log-streams*)))
+                     (close stream-to-close)
                      (remhash ,keyword-name *log-streams*)))
                 cleanup-forms))))
 
     ;; Reverse lists to maintain original order
-    (setf open-forms (nreverse open-forms))
+    (setf stream-vars-bindings (nreverse stream-vars-bindings))
+    (setf open-and-check-forms (nreverse open-and-check-forms))
     (setf cleanup-forms (nreverse cleanup-forms))
 
     ;; Construct the final macro expansion
-    `(unwind-protect
-          (progn
-            ;; Execute all open forms
-            ,@open-forms
-            ;; The main body of code that uses the opened log streams
-            ,@body)
-       ;; The cleanup forms, executed when the `unwind-protect` block is exited
-       ,@cleanup-forms)))
+    `(let ,stream-vars-bindings ; Bind all gensym'd stream variables
+       (unwind-protect
+            (progn
+              ;; Execute all opening and checking forms
+              ,@open-and-check-forms
+              ;; The main body of code that uses the opened log streams
+              ,@body)
+         ;; The cleanup forms, executed when the `unwind-protect` block is exited
+         (progn ; Wrap cleanup forms in a progn to ensure sequential execution
+           ,@cleanup-forms)))))
