@@ -1,8 +1,12 @@
 ;;; File: xlg.lisp
-;;; Description: Contains the core logic for the XLog logging library,
+;;; Description: Contains the core logic for the xlg logging library,
 ;;; including the WITH-OPEN-LOG-FILES, XLG, and XLGT macros, and stream flushing utilities.
-(declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
+
+(declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) 
+
 (in-package #:xlg-lib) ; Corrected package name
+
+(defparameter *debug-flag* nil)
 
 ;; Calculate the offset from 1900-01-01 to 1970-01-01 (Unix epoch)
 ;; This is needed for SBCL's SB-EXT:GET-TIME-OF-DAY which returns seconds since Unix epoch,
@@ -116,11 +120,15 @@
                 (push current-arg ,format-args-g)))))
          (setf ,format-args-g (nreverse ,format-args-g)))
 
-       ;; --- DEBUGGING PRINT ---
-       (format t "~%[XLG DEBUG] Log Keyword: ~S, Format String: ~S~%" ,log-keyword ,format-string)
-       (format t "[XLG DEBUG] line-prefix-g: ~S, timestamp-g: ~S, format-args-g: ~S~%"
-               ,line-prefix-g ,timestamp-g ,format-args-g)
-       ;; --- END DEBUGGING PRINT ---
+	   (when *debug-flag*
+		 ;; --- DEBUGGING PRINT ---
+		 (format t "~%[XLG DEBUG] Log Keyword: ~S, Format String: ~S~%" ,log-keyword ,format-string)
+		 (format t "[XLG DEBUG] line-prefix-g: ~S, timestamp-g: ~S, format-args-g: ~S~%"
+				 ,line-prefix-g ,timestamp-g ,format-args-g)
+		 ;; --- END DEBUGGING PRINT ---
+		 )
+       
+       
 
        (let* ((stream (gethash ,log-keyword *log-streams*))
               (effective-line-prefix (or ,line-prefix-g ""))
