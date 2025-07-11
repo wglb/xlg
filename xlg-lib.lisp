@@ -1,6 +1,6 @@
- ;;; File: xlg-lib.lisp
+;;; File: xlg-lib.lisp
 ;;; Description: Contains the core logic for the XLog logging library,
-;;; including the WITH-OPEN-LOG-FILES and XLG macros, and stream flushing utilities.
+;;; including the WITH-OPEN-LOG-FILES, XLG, and XLGT macros, and stream flushing utilities.
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
 (in-package #:xlg-lib) ; Corrected package name to :xlg-lib
 
@@ -82,59 +82,66 @@
 
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
-;;;          optionally prefixed with a date/time string including microseconds,
-;;;          and optionally to *standard-output*.
+;;;          always prefixed with a date/time string including microseconds.
+;;;          Returns the formatted string.
 ;;; It looks up the stream using a keyword from the global *LOG-STREAMS* hash table.
 ;;;
-;;; Usage: (xlg log-keyword format-string &rest format-and-keyword-args)
+;;; Usage: (xlg log-keyword format-string &rest all-args)
 ;;;   - log-keyword: A keyword (e.g., `:APP-LOG`, `:ERROR-LOG`) that identifies
 ;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
-;;;   - format-and-keyword-args: Remaining arguments, which may include format arguments
-;;;     and the keyword arguments `:line-prefix` followed by its value, and `:to-stdout`.
+;;;   - all-args: Remaining arguments, which may include the keyword argument
+;;;     `:line-prefix` followed by its value, and positional format arguments.
 ;;;
-;;; Returns: (No explicit return value, writes to stream)
+;;; Returns: The formatted log string (including timestamp and line-prefix).
 (defmacro xlg (log-keyword format-string &rest all-args)
   (let ((line-prefix-g (gensym "LINE-PREFIX"))
-        (format-args-g (gensym "FORMAT-ARGS"))
-        (to-stdout-g (gensym "TO-STDOUT"))) ; New gensym for :to-stdout flag
+        (format-args-g (gensym "FORMAT-ARGS")))
     `(let (,line-prefix-g
-           (,format-args-g nil)
-           (,to-stdout-g nil)) ; Initialize to NIL
+           (,format-args-g nil))
        ;; Manually parse the arguments to separate format arguments from keywords
-       (let ((temp-args (list ,@all-args))) ; Correctly capture runtime values
+       (let ((temp-args (list ,@all-args))) ; Capture runtime values of all-args
          (loop while temp-args do
            (if (and (consp temp-args) (eq (car temp-args) :line-prefix))
                (progn
                  (setf ,line-prefix-g (cadr temp-args))
                  (setf temp-args (cddr temp-args))) ; Skip key and value
-               (if (and (consp temp-args) (eq (car temp-args) :to-stdout)) ; Check for :to-stdout
-                   (progn
-                     (setf ,to-stdout-g t) ; Set flag to T
-                     (setf temp-args (cdr temp-args))) ; Skip only the keyword
-                   (progn
-                     (push (car temp-args) ,format-args-g)
-                     (setf temp-args (cdr temp-args))))))
+               (progn
+                 (push (car temp-args) ,format-args-g)
+                 (setf temp-args (cdr temp-args)))))
          (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
 
-       ;; Retrieve the stream from the global *LOG-STREAMS* hash table
-       (let ((stream (gethash ,log-keyword *log-streams*))) ; log-keyword is already a keyword
-         (let* ((prefix-string (if ,line-prefix-g
-                                   (xlg-lib::formatted-current-time-micro ,line-prefix-g) ; Ensure package prefix
-                                   ""))
-                (final-format-string (concatenate 'string prefix-string ,format-string)))
+       (let* ((stream (gethash ,log-keyword *log-streams*))
+              (timestamp-prefix (xlg-lib::formatted-current-time-micro (or ,line-prefix-g ""))) ; Use the parsed line-prefix
+              (formatted-message (apply #'format nil (concatenate 'string timestamp-prefix ,format-string) ,format-args-g))) ; Use parsed format-args
+         (when (streamp stream)
+           (write-string formatted-message stream)
+           (terpri stream)
+           (finish-output stream))
+         formatted-message)))) ; Return the formatted string
 
-           ;; Log to file if stream is valid
-           (when (streamp stream)
-             (apply #'format stream final-format-string ,format-args-g)
-             (terpri stream)
-             (finish-output stream))
+;;; Macro: XLGT
+;;; Purpose: Writes a formatted log entry to a specified log stream AND to *standard-output*,
+;;;          always prefixed with a date/time string including microseconds.
+;;;          Returns the formatted string.
+;;; It calls XLG to perform the logging to the file and get the formatted string.
+;;;
+;;; Usage: (xlgt log-keyword format-string &rest all-args)
+;;;   - log-keyword: A keyword (e.g., `:APP-LOG`, `:ERROR-LOG`) that identifies
+;;;     an open log stream in the *LOG-STREAMS* hash table.
+;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
+;;;   - all-args: Remaining arguments, which may include the keyword argument
+;;;     `:line-prefix` followed by its value, and positional format arguments.
+;;;
+;;; Returns: The formatted log string (including timestamp and line-prefix).
+(defmacro xlgt (log-keyword format-string &rest all-args)
+  `(let* ((formatted-string (xlg-lib:xlg ,log-keyword ,format-string ,@all-args))) ; Pass all-args to xlg
+     ;; Always log to *standard-output*
+     (write-string formatted-string *standard-output*)
+     (terpri *standard-output*)
+     (finish-output *standard-output*)
+     formatted-string)) ; Return the formatted string
 
-           ;; Log to *standard-output* if :to-stdout flag is true
-           (when ,to-stdout-g
-             (apply #'format *standard-output* final-format-string ,format-args-g)
-             (terpri *standard-output*)
-             (finish-output *standard-output*)))))))
 
 ;;; Macro: WITH-OPEN-LOG-FILES
 ;;; Purpose: Opens multiple log files, stores them in the *LOG-STREAMS* hash table

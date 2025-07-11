@@ -1,98 +1,130 @@
-;;; File: xlog-test-cases.lisp
-;;; Description: Test cases for the XLog logging library.
-;;; Demonstrates logging to one, two, and three streams, including date prefixes.
-;;; Also includes a test case for the append/replace option, using keyword identifiers.
-;;; Includes a demonstration of FLUSH-ALL-LOG-STREAMS.
+;;; File: tests/xlg-lib-tests-suite.lisp
+;;; Description: Contains the FiveAM test suite and individual test cases for the XLog library.
+
+;; to run the tests, do
+; (asdf:load-system :xlg-lib-tests)
+; (asdf:test-system :xlg-lib-tests)
+
 
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
 
-;; Ensure the xlg package is available
-(in-package #:xlg)
+;; Ensure the xlg-lib-tests package is available
+(in-package #:xlg-lib-tests) ; Package name: :xlg-lib-tests
+
+;; Define the main test suite for XLog
+(fiveam:def-suite xlg-lib-tests-suite
+  :description "Main test suite for the XLog logging library.")
+
+;; Set this suite as the current one for subsequent test definitions
+(fiveam:in-suite xlg-lib-tests-suite)
 
 ;; --- Test Case 1: Logging to a single stream with YMD date prefix for filename and microsecond line prefix ---
-(format t "~%--- Running Test Case 1: Single Stream Logging with YMD Filename and Microsecond Line Prefixes ---~%")
-;; Note: Now passing :SINGLE-LOG as the keyword identifier
-(with-open-log-files ((:single-log "single-stream.log" :ymd)) ; Filename prefixed with YMD
-  ;; Line prefixed with microsecond timestamp, no additional string
-  (xlg :single-log "This is the first message to a single log stream with date prefix." :line-prefix "")
-  ;; Line prefixed with microsecond timestamp and a custom string
-  (xlg :single-log "Another message for the single log stream: ~a" "Hello, Microseconds!" :line-prefix "[SEC-LOG] ")
-  (format t "Messages written to date-prefixed single-stream.log~%"))
+(fiveam:test single-stream-logging-with-prefixes
+  (format t "~%--- Running Test Case 1: Single Stream Logging with YMD Filename and Microsecond Line Prefixes ---~%")
+  (let ((log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "single-stream.log")))
+    (when (probe-file log-file) (delete-file log-file)) ; Clean up previous run
+    (xlg-lib:with-open-log-files ((:single-log "single-stream.log" :ymd))
+      ;; Test XLG with :line-prefix
+      (let ((returned-string (xlg-lib:xlg :single-log "This is the first message." :line-prefix "[TEST] ")))
+        (fiveam:is-true (search "[TEST] This is the first message." returned-string) "XLG should return string with line-prefix."))
+      ;; Test XLG without :line-prefix
+      (let ((returned-string (xlg-lib:xlg :single-log "Another message: ~a" "Value")))
+        (fiveam:is-true (search "Another message: Value" returned-string) "XLG should return string without line-prefix.")
+        (fiveam:is-true (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLG should include timestamp."))
+      )
+    (fiveam:is-true (probe-file log-file) "Log file 'single-stream.log' should be created.")
+    (let ((content (uiop:read-file-string log-file)))
+      (fiveam:is-true (search "This is the first message." content) "First message should be in log file.")
+      (fiveam:is-true (search "Another message: Value" content) "Second message should be in log file."))
+    (format t "Messages written to date-prefixed single-stream.log~%")))
 
-;; --- Test Case 2: Logging to two streams, one with YMD prefix, one without, and varied line prefixes ---
-(format t "~%--- Running Test Case 2: Two Stream Logging (One Filename Prefix, Varied Line Prefixes) ---~%")
-;; Note: Now passing :APP-LOG and :ERR-LOG as keyword identifiers
-(with-open-log-files ((:app-log "two-streams-app.log" :ymd) ; Filename prefixed with YMD
-                      (:err-log "two-streams-error.log"))    ; No filename prefix
-  ;; Line prefixed with microsecond timestamp and a custom string
-  (xlg :app-log "Application event: User login successful for ~a (date-prefixed filename and line)" "Bill" :line-prefix "[APP] ")
-  ;; Line prefixed with microsecond timestamp, no additional string
-  (xlg :err-log "Error encountered: Failed to connect to database (no filename prefix, but line has microsecond date)." :line-prefix "[SEC-LOG] ")
-  ;; No line prefix
-  (xlg :app-log "Application event: Data processed successfully (date-prefixed filename, no line prefix)." "date-prefixed filename, no line prefix")
-  ;; No line prefix
-  (xlg :err-log "Another error message (no filename prefix, no line prefix).")
-  (format t "Messages written to date-prefixed two-streams-app.log and two-streams-error.log~%"))
+;; --- Test Case 2: Logging to two streams, one with YMD prefix, one without ---
+(fiveam:test two-stream-logging-varied-prefixes
+  (format t "~%--- Running Test Case 2: Two Stream Logging (One Filename Prefix) ---~%")
+  (let ((app-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "two-streams-app.log"))
+        (err-log-file "two-streams-error.log"))
+    (when (probe-file app-log-file) (delete-file app-log-file))
+    (when (probe-file err-log-file) (delete-file err-log-file))
+    (xlg-lib:with-open-log-files ((:app-log "two-streams-app.log" :ymd)
+                                  (:err-log "two-streams-error.log"))
+      (xlg-lib:xlg :app-log "Application event: User login successful for ~a" "Bill" :line-prefix "[APP] ")
+      (xlg-lib:xlg :err-log "Error encountered: Failed to connect to database.")
+      (xlg-lib:xlg :app-log "Application event: Data processed successfully.")
+      (xlg-lib:xlg :err-log "Another error message."))
+    (fiveam:is-true (probe-file app-log-file) "App log file should be created.")
+    (fiveam:is-true (probe-file err-log-file) "Error log file should be created.")
+    (let ((app-content (uiop:read-file-string app-log-file))
+          (err-content (uiop:read-file-string err-log-file)))
+      (fiveam:is-true (search "User login successful" app-content) "App log should have user login message.")
+      (fiveam:is-true (search "Failed to connect to database" err-content) "Error log should have database error message."))
+    (format t "Messages written to date-prefixed two-streams-app.log and two-streams-error.log~%")))
 
-;; --- Test Case 3: Logging to three streams, all with YMD prefix for filename and varied line prefixes ---
-(format t "~%--- Running Test Case 3: Three Stream Logging with YMD Filename and Varied Line Prefixes ---~%")
-;; Note: Now passing :MAIN-LOG, :DEBUG-LOG, :AUDIT-LOG as keyword identifiers
-(with-open-log-files ((:main-log "three-streams-main.log" :ymd)   ; :ymd filename prefix
-                      (:debug-log "three-streams-debug.log" :ymd) ; :ymd filename prefix
-                      (:audit-log "three-streams-audit.log" :ymd)) ; :ymd filename prefix
-  ;; Line prefixed with microsecond timestamp and custom string
-  (xlg :main-log "System initialization started (main log, filename & line prefixed)." :line-prefix "[MAIN] ")
-  ;; Line prefixed with microsecond timestamp and custom string
-  (xlg :debug-log "Debug: Configuration loaded from ~a (debug log, filename & line prefixed)" "/etc/config.ini" :line-prefix "[SEC-LOG] ")
-  ;; Line prefixed with microsecond timestamp and custom string
-  (xlg :audit-log "Audit: Access granted to IP ~a at ~a (audit log, filename & line prefixed)" "192.168.1.100" (get-universal-time) :line-prefix "[AUDIT] ")
-  ;; No line prefix
-  (xlg :main-log "Processing user request: ~a (main log, filename prefixed, no line prefix)" "fetch_data")
-  ;; No line prefix
-  (xlg :debug-log "Debug: Query executed in ~a ms (debug log, filename prefixed, no line prefix)" 150)
-  ;; No line prefix
-  (xlg :audit-log "Audit: Data read by user ~a (audit log, filename prefixed, no line prefix)" "admin")
-  ;; Line prefixed with microsecond timestamp and custom string
-  (xlg :main-log "System shutdown initiated (main log, filename & line prefixed)." :line-prefix "[MAIN] ")
-  (format t "Messages written to date-prefixed three-streams-main.log, debug.log, and audit.log~%"))
+;; --- Test Case 3: Logging to three streams, all with YMD prefix for filename ---
+(fiveam:test three-stream-logging-with-prefixes
+  (format t "~%--- Running Test Case 3: Three Stream Logging with YMD Filename ---~%")
+  (let ((main-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "three-streams-main.log"))
+        (debug-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "three-streams-debug.log"))
+        (audit-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "three-streams-audit.log")))
+    (when (probe-file main-log-file) (delete-file main-log-file))
+    (when (probe-file debug-log-file) (delete-file debug-log-file))
+    (when (probe-file audit-log-file) (delete-file audit-log-file))
+    (xlg-lib:with-open-log-files ((:main-log "three-streams-main.log" :ymd)
+                                  (:debug-log "three-streams-debug.log" :ymd)
+                                  (:audit-log "three-streams-audit.log" :ymd))
+      (xlg-lib:xlg :main-log "System initialization started." :line-prefix "[MAIN] ")
+      (xlg-lib:xlg :debug-log "Debug: Configuration loaded from ~a" "/etc/config.ini" :line-prefix "[SEC-LOG] ")
+      (xlg-lib:xlg :audit-log "Audit: Access granted to IP ~a at ~a" "192.168.1.100" (get-universal-time) :line-prefix "[AUDIT] ")
+      (xlg-lib:xlg :main-log "Processing user request: ~a" "fetch_data")
+      (xlg-lib:xlg :debug-log "Debug: Query executed in ~a ms" 150)
+      (xlg-lib:xlg :audit-log "Audit: Data read by user ~a" "admin")
+      (xlg-lib:xlg :main-log "System shutdown initiated."))
+    (fiveam:is-true (probe-file main-log-file) "Main log file should be created.")
+    (fiveam:is-true (probe-file debug-log-file) "Debug log file should be created.")
+    (fiveam:is-true (probe-file audit-log-file) "Audit log file should be created.")
+    (let ((main-content (uiop:read-file-string main-log-file))
+          (debug-content (uiop:read-file-string debug-log-file))
+          (audit-content (uiop:read-file-string audit-log-file)))
+      (fiveam:is-true (search "System initialization started" main-content) "Main log should have init message.")
+      (fiveam:is-true (search "Configuration loaded" debug-content) "Debug log should have config message.")
+      (fiveam:is-true (search "Access granted" audit-content) "Audit log should have access message."))
+    (format t "Messages written to date-prefixed three-streams-main.log, debug.log, and audit.log~%")))
 
 ;; --- Test Case 4: Demonstrating append vs. replace ---
 (fiveam:test append-vs-replace-file-opening
   (format t "~%--- Running Test Case 4: Append vs. Replace File Opening ---~%")
   (let ((append-file "append-test.log")
         (replace-file "replace-test.log"))
-    ;; Clean up previous runs (note: these files won't have date prefixes)
+    ;; Clean up previous runs
     (when (probe-file append-file) (delete-file append-file))
     (when (probe-file replace-file) (delete-file replace-file))
 
     ;; First, write some content to a file that will be appended to
     (format t "Writing initial content to 'append-test.log' (will be appended to later).~%")
-    ;; Note: Now passing :APPEND-LOG as the keyword identifier
-    (with-open-log-files ((:append-log "append-test.log"))
-      (xlg :append-log "Initial content for append test."))
+    (xlg-lib:with-open-log-files ((:append-log "append-test.log"))
+      (xlg-lib:xlg :append-log "Initial content for append test."))
     (fiveam:is-true (probe-file append-file) "Append test file should be created initially.")
     (fiveam:is (= 1 (count #\Newline (uiop:read-file-string append-file))) "Append test file should have one line initially.")
 
     ;; Now, append more content to it
     (format t "Appending more content to 'append-test.log'.~%")
-    (with-open-log-files ((:append-log "append-test.log" nil :append)) ; Explicitly :append (default)
-      (xlg :append-log "Appended content for append test."))
+    (xlg-lib:with-open-log-files ((:append-log "append-test.log" nil :append)) ; Explicitly :append (default)
+      (xlg-lib:xlg :append-log "Appended content for append test."))
     (fiveam:is (= 2 (count #\Newline (uiop:read-file-string append-file))) "Append test file should have two lines after appending.")
     (fiveam:is-true (search "Initial content" (uiop:read-file-string append-file)) "Initial content should still be in append file.")
     (fiveam:is-true (search "Appended content" (uiop:read-file-string append-file)) "Appended content should be in append file.")
 
     ;; Write some content to a file that will be replaced
     (format t "Writing initial content to 'replace-test.log' (will be replaced later).~%")
-    (with-open-log-files ((:replace-log "replace-test.log"))
-      (xlg :replace-log "Initial content for replace test - this should be overwritten."))
+    (xlg-lib:with-open-log-files ((:replace-log "replace-test.log"))
+      (xlg-lib:xlg :replace-log "Initial content for replace test - this should be overwritten."))
     (fiveam:is-true (probe-file replace-file) "Replace test file should be created initially.")
     (fiveam:is (= 1 (count #\Newline (uiop:read-file-string replace-file))) "Replace test file should have one line initially.")
     (fiveam:is-true (search "Initial content" (uiop:read-file-string replace-file)) "Initial content should be in replace file.")
 
     ;; Now, replace the content of that file
     (format t "Replacing content of 'replace-test.log'.~%")
-    (with-open-log-files ((:replace-log "replace-test.log" nil :replace)) ; Explicitly :replace
-      (xlg :replace-log "Replaced content for replace test - this should be the ONLY line."))
+    (xlg-lib:with-open-log-files ((:replace-log "replace-test.log" nil :replace)) ; Explicitly :replace
+      (xlg-lib:xlg :replace-log "Replaced content for replace test - this should be the ONLY line."))
     (fiveam:is (= 1 (count #\Newline (uiop:read-file-string replace-file))) "Replace test file should have one line after replacing.")
     (fiveam:is-false (search "Initial content" (uiop:read-file-string replace-file)) "Initial content should NOT be in replace file after replacement.")
     (fiveam:is-true (search "Replaced content" (uiop:read-file-string replace-file)) "Replaced content should be in replace file.")
@@ -105,21 +137,21 @@
   (let ((flush-test-file "flush-test.log"))
     (when (probe-file flush-test-file) (delete-file flush-test-file))
 
-    (with-open-log-files ((:flush-log flush-test-file :replace)) ; Use :replace to start fresh
-      (xlg :flush-log "First message, should be written immediately by XLG.")
-      (xlg :flush-log "Second message, also written by XLG.")
+    (xlg-lib:with-open-log-files ((:flush-log flush-test-file :replace)) ; Use :replace to start fresh
+      (xlg-lib:xlg :flush-log "First message, should be written immediately by XLG.")
+      (xlg-lib:xlg :flush-log "Second message, also written by XLG.")
 
       (format t "Writing a message without XLG, then flushing all streams manually.~%")
       ;; Write directly to the stream without XLG's auto-flush
-      (let ((stream (gethash :flush-log *log-streams*)))
-        (format stream "This message is written directly to the stream, not via XLG.~%")
-        (format stream "Another direct message, still not flushed by XLG.~%"))
+      (let ((stream (gethash :flush-log xlg-lib::*log-streams*)))
+        (when (streamp stream)
+          (format stream "This message is written directly to the stream, not via XLG.~%")
+          (format stream "Another direct message, still not flushed by XLG.~%")))
 
-      ;; Now, explicitly flush all log streams
-      (flush-all-log-streams)
+      (xlg-lib:flush-all-log-streams) ; Call the explicit flush function
       (format t "All log streams explicitly flushed.~%")
 
-      (xlg :flush-log "Third message, written after manual flush.")
+      (xlg-lib:xlg :flush-log "Third message, written after manual flush.")
       )
     (fiveam:is-true (probe-file flush-test-file) "Flush test file should be created.")
     (let ((content (uiop:read-file-string flush-test-file)))
@@ -131,10 +163,72 @@
     (format t "Check 'flush-test.log' to see all messages, including those explicitly flushed.~%")))
 
 
+;; --- Test Case 6: Testing XLGT macro (log to file and stdout) ---
+(fiveam:test xlgt-macro-logging
+  (format t "~%--- Running Test Case 6: Testing XLGT macro (log to file and stdout) ---~%")
+  (let ((xlgt-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "xlgt-test.log"))
+        (captured-output (make-string-output-stream)))
+    (when (probe-file xlgt-log-file) (delete-file xlgt-log-file))
+
+    (xlg-lib:with-open-log-files ((:xlgt-stream xlgt-log-file :ymd))
+      (let ((*standard-output* captured-output)) ; Rebind *standard-output* to capture output
+        ;; Log without line-prefix
+        (let ((returned-string (xlg-lib:xlgt :xlgt-stream "Hello from XLGT!")))
+          (fiveam:is-true (search "Hello from XLGT!" returned-string) "XLGT should return formatted string.")
+          (fiveam:is-true (search "Hello from XLGT!" (get-output-stream-string captured-output)) "XLGT: Message should be in stdout."))
+        (clear-output-stream captured-output) ; Clear stream for next capture
+
+        ;; Log with line-prefix
+        (let ((returned-string (xlg-lib:xlgt :xlgt-stream "Another XLGT message." :line-prefix "[Echo] ")))
+          (fiveam:is-true (search "[Echo] Another XLGT message." returned-string) "XLGT should return formatted string with line-prefix.")
+          (fiveam:is-true (search "[Echo] Another XLGT message." (get-output-stream-string captured-output)) "XLGT: Message should be in stdout with line-prefix."))
+        ) ; End of let (*standard-output* ...)
+    ) ; End of with-open-log-files
+
+    (fiveam:is-true (probe-file xlgt-log-file) "XLGT log file should be created.")
+    (let ((content (uiop:read-file-string xlgt-log-file)))
+      (fiveam:is-true (search "Hello from XLGT!" content) "XLGT: First message should be in log file.")
+      (fiveam:is-true (search "Another XLGT message." content) "XLGT: Second message should be in log file.")
+      (fiveam:is-true (search "[Echo]" content) "XLGT: Second message should have [Echo] prefix in log file."))
+    (format t "Messages written to date-prefixed xlgt-test.log and stdout.~%")))
+
+
+;; --- Test Case 7: Nested WITH-OPEN-LOG-FILES with keyword reuse (expecting error) ---
+(fiveam:test nested-with-open-log-files-error-on-reuse
+  (format t "~%--- Running Test Case 7: Nested WITH-OPEN-LOG-FILES with Keyword Reuse (Expecting Error) ---~%")
+  (let ((outer-log-file "outer-nested-test.log")
+        (inner-log-file "inner-nested-test.log")) ; Define inner-log-file here
+    (when (probe-file outer-log-file) (delete-file outer-log-file))
+    (when (probe-file inner-log-file) (delete-file inner-log-file)) ; Explicit cleanup for inner file
+
+    (xlg-lib:with-open-log-files ((:my-shared-log outer-log-file :replace)) ; Use keyword for stream
+      (xlg-lib:xlg :my-shared-log "Message from outer scope before nested call.")
+      (format t "Attempting to open nested log with same keyword (:MY-SHARED-LOG)...~%")
+
+      (handler-case
+          (xlg-lib:with-open-log-files ((:my-shared-log inner-log-file nil :replace)) ; This should error
+            ;; This line should NOT be reached if the error is signaled correctly
+            (xlg-lib:xlg :my-shared-log "This message should never be logged by inner scope.")
+            (fiveam:fail "Inner with-open-log-files did NOT signal an error as expected.")) ; Fail if no error
+        (error (c)
+          (format t "Caught expected error: ~a~%" c)
+          (fiveam:pass "Successfully caught expected error for keyword reuse."))) ; Pass if error caught
+
+      (format t "Verifying outer log still works after error.~%")
+      (xlg-lib:xlg :my-shared-log "Message from outer scope after nested call attempt.") ; This should work
+
+      (fiveam:is-true (probe-file outer-log-file) "Outer log file should still exist.")
+      (let ((content (uiop:read-file-string outer-log-file)))
+        (format t "nwolfeor: file is ~s~%------------------~%" content)
+        (fiveam:is-true (search "Message from outer scope before nested call." content) "Outer log: first message present.")
+        (fiveam:is-true (search "Message from outer scope after nested call attempt." content) "Outer log: second message present.")
+        (fiveam:is-false (search "This message should never be logged" content) "Inner message should NOT be in outer log.")
+        (fiveam:is-false (probe-file inner-log-file) "Inner log file should NOT be created if error signaled early.")))))
+                                                                                                                          
 ;; Function to run all tests in the suite
 (defun run-xlg-tests ()
-  "Runs all tests defined in the XLG-TESTS-SUITE."
+  "Runs all tests defined in the XLG-LIB-TESTS-SUITE."
   (let ((*default-pathname-defaults* #P"")) ; Ensure tests run in current directory
-    (fiveam:run! 'xlg-tests-suite)))
+    (fiveam:run! 'xlg-lib-tests-suite)))
 
-(format t "~%--- All test cases defined. Use (asdf:test-system :xlg-tests) to run them. ---~%")
+(format t "~%--- All test cases defined. Use (asdf:test-system :xlg-lib-tests) to run them. ---~%")
