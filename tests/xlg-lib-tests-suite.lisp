@@ -1,5 +1,4 @@
 
-
 ;;; File: tests/xlg-lib-tests-suite.lisp
 ;;; Description: Contains the FiveAM test suite and individual test cases for the XLog library.
 
@@ -170,7 +169,7 @@
       (format t "Writing a message without XLG, then flushing all streams manually.~%")
       ;; Write directly to the stream without XLG's auto-flush
       (let ((stream (gethash :flush-log xlg-lib::*log-streams*)))
-        (when (streamp stream)
+        (when (streamp stream) ; Ensure stream is valid before writing
           (format stream "~aThis is a direct write, not auto-flushed by XLG.~%" (xlg-lib::formatted-current-time-micro ""))
           (format stream "~aAnother direct message, still buffered.~%" (xlg-lib::formatted-current-time-micro ""))))
 
@@ -194,7 +193,8 @@
   (let ((xlgt-log-file (concatenate 'string (xlg-lib::dates-ymd :ymd) "xlgt-test.log")))
     (when (probe-file xlgt-log-file) (delete-file xlgt-log-file))
 
-    (xlg-lib:with-open-log-files ((:xlgt-stream xlgt-log-file :ymd))
+    ;; CORRECTED: Pass only the base filename to with-open-log-files, let it handle the prefixing
+    (xlg-lib:with-open-log-files ((:xlgt-stream "xlgt-test.log" :ymd))
       ;; Log without line-prefix, NO timestamp (default NIL)
       (let* ((captured-output (make-string-output-stream)) ; Create a new stream for each capture
              (*standard-output* captured-output)
@@ -215,15 +215,15 @@
       (let* ((captured-output (make-string-output-stream)) ; Create a new stream for each capture
              (*standard-output* captured-output)
              (returned-string (xlg-lib:xlgt :xlgt-stream "XLGT message without timestamp." :timestamp nil)))
-        (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLGT should NOT include timestamp when :timestamp is NIL.")
         (fiveam:is-true (search "XLGT message without timestamp." returned-string) "XLGT should return message content.")
-        (fiveam:is-true (search "XLGT message without timestamp." (get-output-stream-string captured-output)) "XLGT: Message should be in stdout without timestamp."))
+        (fiveam:is-true (search "XLGT message without timestamp." (get-output-stream-string captured-output)) "XLGT: Message should be in stdout without timestamp.")
+        (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLGT should NOT include timestamp when :timestamp is NIL."))
 
       ;; Log with :timestamp NIL and :line-prefix
       (let* ((captured-output (make-string-output-stream)) ; Create a new stream for each capture
              (*standard-output* captured-output)
              (returned-string (xlg-lib:xlgt :xlgt-stream "XLGT message with only line-prefix." :line-prefix "[XLGT-NO-TS] " :timestamp nil)))
-        (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLGT should NOT include timestamp.")
+        (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLG should NOT include timestamp.")
         (fiveam:is-true (search "[XLGT-NO-TS] XLGT message with only line-prefix." returned-string) "XLGT should include only line-prefix.")
         (fiveam:is-true (search "[XLGT-NO-TS] XLGT message with only line-prefix." (get-output-stream-string captured-output)) "XLGT: Message should be in stdout with only line-prefix.")))
     (fiveam:is-true (probe-file xlgt-log-file) "XLGT log file should be created.")
@@ -232,8 +232,8 @@
       (fiveam:is-true (search "Another XLGT message." content) "XLGT: Second message should be in log file.")
       (fiveam:is-true (search "XLGT message without timestamp." content) "XLGT: Third message (no timestamp) should be in log file.")
       (fiveam:is-true (search "[XLGT-NO-TS] XLGT message with only line-prefix." content) "XLGT: Fourth message (only line-prefix) should be in log file."))
-    (format t "Messages written to date-prefixed xlgt-test.log and stdout.~%")))
-
+    (format t "Messages written to date-prefixed xlgt-test.log and stdout.~%")) ; End of with-open-log-files
+  )
 
 
 ;; --- Test Case 7: Nested WITH-OPEN-LOG-FILES with keyword reuse (expecting error) ---
