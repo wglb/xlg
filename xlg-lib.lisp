@@ -95,13 +95,13 @@
 ;;; Returns: (No explicit return value, writes to stream)
 (defmacro xlg (log-keyword format-string &rest all-args)
   (let ((line-prefix-g (gensym "LINE-PREFIX"))
-        (timestamp-g (gensym "TIMESTAMP")) ; Added timestamp-g back for explicit control
+        (timestamp-g (gensym "TIMESTAMP"))
         (format-args-g (gensym "FORMAT-ARGS")))
     `(let (,line-prefix-g
            (,timestamp-g nil) ; Default to NIL for timestamp
            (,format-args-g nil))
        ;; Manually parse the arguments to separate format arguments from keywords
-       (let ((remaining-args (copy-list (list ,@all-args)))) ; Create a mutable copy of runtime args
+       (let ((remaining-args (copy-list (list ,@all-args))))
          (loop
            (unless remaining-args (return))
            (let ((current-arg (pop remaining-args)))
@@ -114,7 +114,13 @@
                 (setf ,timestamp-g (pop remaining-args)))
                (t
                 (push current-arg ,format-args-g)))))
-         (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
+         (setf ,format-args-g (nreverse ,format-args-g)))
+
+       ;; --- DEBUGGING PRINT ---
+       (format t "~%[XLG DEBUG] Log Keyword: ~S, Format String: ~S~%" ,log-keyword ,format-string)
+       (format t "[XLG DEBUG] line-prefix-g: ~S, timestamp-g: ~S, format-args-g: ~S~%"
+               ,line-prefix-g ,timestamp-g ,format-args-g)
+       ;; --- END DEBUGGING PRINT ---
 
        (let* ((stream (gethash ,log-keyword *log-streams*))
               (effective-line-prefix (or ,line-prefix-g ""))
