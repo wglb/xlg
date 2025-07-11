@@ -99,35 +99,40 @@
 (defmacro xlg (log-keyword format-string &rest all-args)
   (let ((line-prefix-g (gensym "LINE-PREFIX"))
         (timestamp-g (gensym "TIMESTAMP"))
-        (format-args-g (gensym "FORMAT-ARGS")))
+        (format-args-g (gensym "FORMAT-ARGS"))
+        (parsed-args (gensym "PARSED-ARGS")))
     `(let (,line-prefix-g
-           (,timestamp-g nil) ; Default to NIL for no timestamp
+           (,timestamp-g nil)
            (,format-args-g nil))
        ;; Manually parse the arguments to separate format arguments from keywords
-       (let ((temp-args (list ,@all-args))) ; Capture runtime values of all-args
-         (loop while temp-args do
-           (cond
-             ((and (consp temp-args) (eq (car temp-args) :line-prefix))
-              (setf ,line-prefix-g (cadr temp-args))
-              (setf temp-args (cddr temp-args)))
-             ((and (consp temp-args) (eq (car temp-args) :timestamp))
-              (setf ,timestamp-g (cadr temp-args)) ; This will set it to T if :timestamp T is passed
-              (setf temp-args (cddr temp-args)))
-             (t
-              (push (car temp-args) ,format-args-g)
-              (setf temp-args (cdr temp-args)))))
-         (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
+       (let ((,parsed-args (copy-list (list ,@all-args)))) ; Create a mutable copy of runtime args
+         (loop
+           (unless ,parsed-args (return))
+           (let ((arg (pop ,parsed-args)))
+             (cond
+               ((eq arg :line-prefix)
+                (unless ,parsed-args (error "Missing value for :line-prefix in XLG call."))
+                (setf ,line-prefix-g (pop ,parsed-args)))
+               ((eq arg :timestamp)
+                (unless ,parsed-args (error "Missing value for :timestamp in XLG call."))
+                (setf ,timestamp-g (pop ,parsed-args)))
+               (t
+                (push arg ,format-args-g))))
+         (setf ,format-args-g (nreverse ,format-args-g)))
 
        (let* ((stream (gethash ,log-keyword *log-streams*))
+              (effective-line-prefix (or ,line-prefix-g ""))
               (prefix-string (if ,timestamp-g
-                                 (xlg-lib::formatted-current-time-micro (or ,line-prefix-g ""))
-                                 (or ,line-prefix-g ""))) ; Ensures prefix-string is always a string
+                                 (xlg-lib::formatted-current-time-micro effective-line-prefix)
+                                 effective-line-prefix))
               (final-format-string (concatenate 'string prefix-string ,format-string)))
+         ;; Debug print to see what prefix-string is being generated
+         (format *error-output* "~%DEBUG (XLG Macro): Generated Prefix String = ~S~%" prefix-string)
          (when (streamp stream)
            (apply #'format stream final-format-string ,format-args-g)
            (terpri stream)
            (finish-output stream))
-         (apply #'format nil final-format-string ,format-args-g))))) ; Return the formatted string
+         (apply #'format nil final-format-string ,format-args-g)))))) ; Return the formatted string
 
 ;;; Macro: XLGT
 ;;; Purpose: Writes a formatted log entry to a specified log stream AND to *standard-output*,
