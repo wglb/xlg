@@ -82,58 +82,69 @@
 
 ;;; Macro: XLG
 ;;; Purpose: Writes a formatted log entry to a specified log stream,
-;;;          always prefixed with a date/time string including microseconds.
+;;;          optionally prefixed with a date/time string including microseconds.
 ;;;          Returns the formatted string.
 ;;; It looks up the stream using a keyword from the global *LOG-STREAMS* hash table.
 ;;;
-;;; Usage: (xlg log-keyword format-string &rest all-args)
+;;; Usage: (xlg log-keyword format-string &rest all-args &key (line-prefix nil) (timestamp nil))
 ;;;   - log-keyword: A keyword (e.g., `:APP-LOG`, `:ERROR-LOG`) that identifies
 ;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
-;;;   - all-args: Remaining arguments, which may include the keyword argument
-;;;     `:line-prefix` followed by its value, and positional format arguments.
+;;;   - all-args: Remaining arguments, which may include the keyword arguments
+;;;     `:line-prefix` and `:timestamp`, followed by their values, and positional format arguments.
+;;;   - line-prefix: An optional string to append after the timestamp in the line prefix. Defaults to NIL.
+;;;   - timestamp: A boolean (T or NIL) to control whether a microsecond timestamp is prepended. Defaults to NIL.
 ;;;
-;;; Returns: The formatted log string (including timestamp and line-prefix).
+;;; Returns: The formatted log string (including optional timestamp and line-prefix).
 (defmacro xlg (log-keyword format-string &rest all-args)
   (let ((line-prefix-g (gensym "LINE-PREFIX"))
+        (timestamp-g (gensym "TIMESTAMP"))
         (format-args-g (gensym "FORMAT-ARGS")))
     `(let (,line-prefix-g
+           (,timestamp-g nil) ; Default to NIL for no timestamp
            (,format-args-g nil))
        ;; Manually parse the arguments to separate format arguments from keywords
        (let ((temp-args (list ,@all-args))) ; Capture runtime values of all-args
          (loop while temp-args do
-           (if (and (consp temp-args) (eq (car temp-args) :line-prefix))
-               (progn
-                 (setf ,line-prefix-g (cadr temp-args))
-                 (setf temp-args (cddr temp-args))) ; Skip key and value
-               (progn
-                 (push (car temp-args) ,format-args-g)
-                 (setf temp-args (cdr temp-args)))))
+           (cond
+             ((and (consp temp-args) (eq (car temp-args) :line-prefix))
+              (setf ,line-prefix-g (cadr temp-args))
+              (setf temp-args (cddr temp-args)))
+             ((and (consp temp-args) (eq (car temp-args) :timestamp))
+              (setf ,timestamp-g (cadr temp-args)) ; This will set it to T if :timestamp T is passed
+              (setf temp-args (cddr temp-args)))
+             (t
+              (push (car temp-args) ,format-args-g)
+              (setf temp-args (cdr temp-args)))))
          (setf ,format-args-g (nreverse ,format-args-g))) ; Reverse to maintain original order
 
        (let* ((stream (gethash ,log-keyword *log-streams*))
-              (timestamp-prefix (xlg-lib::formatted-current-time-micro (or ,line-prefix-g ""))) ; Use the parsed line-prefix
-              (formatted-message (apply #'format nil (concatenate 'string timestamp-prefix ,format-string) ,format-args-g))) ; Use parsed format-args
+              (prefix-string (if ,timestamp-g
+                                 (xlg-lib::formatted-current-time-micro (or ,line-prefix-g ""))
+                                 (or ,line-prefix-g ""))) ; Ensures prefix-string is always a string
+              (final-format-string (concatenate 'string prefix-string ,format-string)))
          (when (streamp stream)
-           (write-string formatted-message stream)
+           (apply #'format stream final-format-string ,format-args-g)
            (terpri stream)
            (finish-output stream))
-         formatted-message)))) ; Return the formatted string
+         (apply #'format nil final-format-string ,format-args-g))))) ; Return the formatted string
 
 ;;; Macro: XLGT
 ;;; Purpose: Writes a formatted log entry to a specified log stream AND to *standard-output*,
-;;;          always prefixed with a date/time string including microseconds.
+;;;          optionally prefixed with a date/time string including microseconds.
 ;;;          Returns the formatted string.
 ;;; It calls XLG to perform the logging to the file and get the formatted string.
 ;;;
-;;; Usage: (xlgt log-keyword format-string &rest all-args)
+;;; Usage: (xlgt log-keyword format-string &rest all-args &key (line-prefix nil) (timestamp nil))
 ;;;   - log-keyword: A keyword (e.g., `:APP-LOG`, `:ERROR-LOG`) that identifies
 ;;;     an open log stream in the *LOG-STREAMS* hash table.
 ;;;   - format-string: A standard Common Lisp format control string (e.g., "~a ~s").
-;;;   - all-args: Remaining arguments, which may include the keyword argument
-;;;     `:line-prefix` followed by its value, and positional format arguments.
+;;;   - all-args: Remaining arguments, which may include the keyword arguments
+;;;     `:line-prefix` and `:timestamp`, followed by their values, and positional format arguments.
+;;;   - line-prefix: An optional string to append after the timestamp in the line prefix. Defaults to NIL.
+;;;   - timestamp: A boolean (T or NIL) to control whether a microsecond timestamp is prepended. Defaults to NIL.
 ;;;
-;;; Returns: The formatted log string (including timestamp and line-prefix).
+;;; Returns: The formatted log string (including optional timestamp and line-prefix).
 (defmacro xlgt (log-keyword format-string &rest all-args)
   `(let* ((formatted-string (xlg-lib:xlg ,log-keyword ,format-string ,@all-args))) ; Pass all-args to xlg
      ;; Always log to *standard-output*
