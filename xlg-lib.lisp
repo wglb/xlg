@@ -35,21 +35,22 @@
   (multiple-value-bind (s min h d m y doy dstflag offset)
       (decode-universal-time (get-universal-time))
     (declare (ignore doy))
-    (case dates
-      (:hms (format nil "~4,'0D-~2,'0D-~2,'0D-~2,'0D-~2,'0D-~2,'0D_"
-                    y m d (+ h offset (if dstflag -1 0)) min s))
-      (:hour (format nil "~4,'0D-~2,'0D-~2,'0D-~2,'0D_"
-                     y m d h))
-      (:ym (format nil "~4,'0D-~2,'0D_"
-                   y m))
-      (:ymd (format nil "~4,'0D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
-                    y m d))
-      ;; If 'dates' is non-NIL but not one of the specific keywords,
-      ;; assume the default YMD_ format.
-      ((t) (format nil "~4,'0D-~2,'0D-~2,'0D_"
-                   y m d))
-      ;; If 'dates' is NIL or any other unrecognized value, return empty string
-      (otherwise (format nil "")))))
+    (let ((prefix (case dates
+                    (:hms (format nil "~4,'0D-~2,'0D-~2,'0D-~2,'0D-~2,'0D-~2,'0D_"
+                                  y m d (+ h offset (if dstflag -1 0)) min s))
+                    (:hour (format nil "~4,'0D-~2,'0D-~2,'0D-~2,'0D_"
+                                   y m d h))
+                    (:ym (format nil "~4,'0D-~2,'0D_"
+                                 y m))
+                    (:ymd (format nil "~4,'0D-~2,'0D-~2,'0D_" ; Includes underscore for consistent prefixing
+                                  y m d))
+                    ;; If 'dates' is non-NIL but not one of the specific keywords,
+                    ;; assume the default YMD_ format.
+                    ((t) (format nil "~4,'0D-~2,'0D-~2,'0D_"
+                                 y m d))
+                    (otherwise (format nil "")))))
+      ;; (format *error-output* "~%DEBUG (DATES-YMD): Called with ~S, returning ~S~%" dates prefix) ; Debug print
+      prefix)))
 
 ;;; Function: FORMATTED-CURRENT-TIME-MICRO
 ;;; Purpose: Produces a formatted timestamp string with microseconds.
@@ -93,7 +94,7 @@
 ;;;   - all-args: Remaining arguments, which may include the keyword arguments
 ;;;     `:line-prefix` and `:timestamp`, followed by their values, and positional format arguments.
 ;;;   - line-prefix: An optional string to append after the timestamp in the line prefix. Defaults to NIL.
-;;;   - timestamp: A boolean (T or NIL) to control whether a microsecond timestamp is prepended. Defaults to NIL.
+;;;   - timestamp: A boolean (T or NIL) to control whether a microsecond timestamp is prepended. Defaults to T.
 ;;;
 ;;; Returns: The formatted log string (including optional timestamp and line-prefix).
 (defmacro xlg (log-keyword format-string &rest all-args)
@@ -102,7 +103,7 @@
         (format-args-g (gensym "FORMAT-ARGS"))
         (parsed-args (gensym "PARSED-ARGS")))
     `(let (,line-prefix-g
-           (,timestamp-g nil)
+           (,timestamp-g t) ; Default to T for timestamp
            (,format-args-g nil))
        ;; Manually parse the arguments to separate format arguments from keywords
        (let ((,parsed-args (copy-list (list ,@all-args)))) ; Create a mutable copy of runtime args
@@ -126,13 +127,13 @@
                                  (xlg-lib::formatted-current-time-micro effective-line-prefix)
                                  effective-line-prefix))
               (final-format-string (concatenate 'string prefix-string ,format-string)))
-         ;; Debug print to see what prefix-string is being generated
-         (format *error-output* "~%DEBUG (XLG Macro): Generated Prefix String = ~S~%" prefix-string)
+         ;; (format *error-output* "~%DEBUG (XLG Macro): Generated Prefix String = ~S~%" prefix-string) ; Debug print
          (when (streamp stream)
            (apply #'format stream final-format-string ,format-args-g)
            (terpri stream)
            (finish-output stream))
          (apply #'format nil final-format-string ,format-args-g)))))) ; Return the formatted string
+
 
 ;;; Macro: XLGT
 ;;; Purpose: Writes a formatted log entry to a specified log stream AND to *standard-output*,
@@ -147,7 +148,7 @@
 ;;;   - all-args: Remaining arguments, which may include the keyword arguments
 ;;;     `:line-prefix` and `:timestamp`, followed by their values, and positional format arguments.
 ;;;   - line-prefix: An optional string to append after the timestamp in the line prefix. Defaults to NIL.
-;;;   - timestamp: A boolean (T or NIL) to control whether a microsecond timestamp is prepended. Defaults to NIL.
+;;;   - timestamp: A boolean (T or NIL) to control whether a microsecond timestamp is prepended. Defaults to T.
 ;;;
 ;;; Returns: The formatted log string (including optional timestamp and line-prefix).
 (defmacro xlgt (log-keyword format-string &rest all-args)
@@ -165,16 +166,17 @@
 ;;;          all log files are closed and removed from the hash table upon exit.
 ;;; Each file is opened in append mode, creating it if it doesn't exist.
 ;;;
-;;; Usage: (with-open-log-files (((:stream-keyword-1 "path/to/file1.log" &optional date-prefix-keyword if-exists-option)
+;;; Usage: (with-open-log-files (((:stream-keyword-1 "path/to/file1.log" &optional date-prefix-keyword-or-string if-exists-option)
 ;;;                                (:stream-keyword-2 "path/to/file2.log"))
 ;;;          body-forms...)
 ;;;   - log-streams: A list of lists. Each inner list must be of the form
-;;;     `(keyword-name "file-path-string" &optional date-prefix-keyword if-exists-option)`.
+;;;     `(keyword-name "file-path-string" &optional date-prefix-keyword-or-string if-exists-option)`.
 ;;;     `keyword-name` will be a keyword (e.g., `:MY-LOG-STREAM`) used as a key
 ;;;     in the *LOG-STREAMS* hash table.
 ;;;     `file-path-string` is a string representing the path to the log file.
-;;;     `date-prefix-keyword` is an optional keyword (e.g., `:ymd`, `:hms`)
-;;;     to prepend a date/time string to the filename. If not provided, no prefix.
+;;;     `date-prefix-keyword-or-string` is an optional keyword (e.g., `:ymd`, `:hms`)
+;;;     to prepend a date/time string to the filename, OR an already formatted date string.
+;;;     If not provided, no prefix.
 ;;;     `if-exists-option` is an optional keyword (`:append` or `:replace`).
 ;;;     If `:replace`, the file will be overwritten. Defaults to `:append`.
 ;;;   - body: One or more Common Lisp forms to be executed within the context
@@ -209,7 +211,10 @@
                             ,keyword-name))
 
                    ;; 2. Evaluate date prefix string at runtime and then open the file
-                   (let* ((actual-date-prefix-string (if ,date-prefix (xlg-lib::dates-ymd ,date-prefix) "")) ; Evaluate at runtime
+                   (let* ((actual-date-prefix-string (cond
+                                                       ((keywordp ,date-prefix) (xlg-lib::dates-ymd ,date-prefix))
+                                                       ((stringp ,date-prefix) ,date-prefix)
+                                                       (t ""))) ; Default to empty string if not keyword or string
                           (open-if-exists (cond ((eq ,if-exists-option :replace) :supersede) (t :append))))
                      (setf ,new-stream-var (open (concatenate 'string actual-date-prefix-string ,file-path)
                                                 :direction :output
