@@ -9,7 +9,7 @@
 (declaim (optimize (speed 0) (safety 3) (debug 3) (space 0))) ; Debugging optimization settings
 
 ;; Ensure the xlg-lib-tests package is available
-(in-package #:xlg-lib-tests) ; Corrected to xlg-lib-tests
+(in-package #:xlg-lib-tests)
 
 ;; Define the main test suite for XLog
 (fiveam:def-suite xlg-lib-tests-suite
@@ -33,7 +33,7 @@
         (fiveam:is-true (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLG should include timestamp when :timestamp is T."))
 
       ;; Test XLG without :line-prefix and NO timestamp (default NIL)
-      (let ((returned-string (xlg-lib:xlg :single-log "Another message: ~a" "Value" :timestamp nil))) ; Explicitly nil for timestamp
+      (let ((returned-string (xlg-lib:xlg :single-log "Another message: ~a" "Value" :timestamp nil)))
         (fiveam:is-true (search "Another message: Value" returned-string) "XLG should return string without line-prefix.")
         (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLG should NOT include timestamp by default."))
 
@@ -70,10 +70,10 @@
     ;; Pass the pre-calculated date prefix string for :app-log
     (xlg-lib:with-open-log-files ((:app-log "two-streams-app.log" current-date-prefix)
                                   (:err-log "two-streams-error.log"))
-      (xlg-lib:xlg :app-log "Application event: User login successful for ~a" "Bill" :line-prefix "[APP] " :timestamp t) ; Explicit timestamp
-      (xlg-lib:xlg :err-log "Error encountered: Failed to connect to database." :timestamp nil) ; No timestamp (default)
-      (xlg-lib:xlg :app-log "Application event: Data processed successfully." :timestamp nil) ; No timestamp
-      (xlg-lib:xlg :err-log "Another error message." :line-prefix "[WARN] " :timestamp nil)) ; No timestamp, with prefix
+      (xlg-lib:xlg :app-log "Application event: User login successful for ~a" "Bill" :line-prefix "[APP] " :timestamp t)
+      (xlg-lib:xlg :err-log "Error encountered: Failed to connect to database." :timestamp nil)
+      (xlg-lib:xlg :app-log "Application event: Data processed successfully." :timestamp nil)
+      (xlg-lib:xlg :err-log "Another error message." :line-prefix "[WARN] " :timestamp nil))
     (fiveam:is-true (probe-file app-log-file) "App log file should be created.")
     (fiveam:is-true (probe-file err-log-file) "Error log file should be created.")
     (let ((app-content (uiop:read-file-string app-log-file))
@@ -101,13 +101,13 @@
     (xlg-lib:with-open-log-files ((:main-log "three-streams-main.log" current-date-prefix)
                                   (:debug-log "three-streams-debug.log" current-date-prefix)
                                   (:audit-log "three-streams-audit.log" current-date-prefix))
-      (xlg-lib:xlg :main-log "System initialization started." :line-prefix "[MAIN] " :timestamp t) ; Explicit timestamp
-      (xlg-lib:xlg :debug-log "Debug: Configuration loaded from ~a" "/etc/config.ini" :line-prefix "[SEC-LOG] " :timestamp t) ; Explicit timestamp
-      (xlg-lib:xlg :audit-log "Audit: Access granted to IP ~a at ~a" "192.168.1.100" (get-universal-time) :line-prefix "[AUDIT] " :timestamp t) ; Explicit timestamp
-      (xlg-lib:xlg :main-log "Processing user request: ~a" "fetch_data" :timestamp nil) ; No timestamp
-      (xlg-lib:xlg :debug-log "Debug: Query executed in ~a ms" 150 :timestamp nil) ; No timestamp (explicitly)
-      (xlg-lib:xlg :audit-log "Audit: Data read by user ~a" "admin" :timestamp nil) ; No timestamp (explicitly)
-      (xlg-lib:xlg :main-log "System shutdown initiated." :timestamp t)) ; Explicit timestamp
+      (xlg-lib:xlg :main-log "System initialization started." :line-prefix "[MAIN] " :timestamp t)
+      (xlg-lib:xlg :debug-log "Debug: Configuration loaded from ~a" "/etc/config.ini" :line-prefix "[SEC-LOG] " :timestamp t)
+      (xlg-lib:xlg :audit-log "Audit: Access granted to IP ~a at ~a" "192.168.1.100" (get-universal-time) :line-prefix "[AUDIT] " :timestamp t)
+      (xlg-lib:xlg :main-log "Processing user request: ~a" "fetch_data" :timestamp nil)
+      (xlg-lib:xlg :debug-log "Debug: Query executed in ~a ms" 150 :timestamp nil)
+      (xlg-lib:xlg :audit-log "Audit: Data read by user ~a" "admin" :timestamp nil)
+      (xlg-lib:xlg :main-log "System shutdown initiated." :timestamp t))
     (fiveam:is-true (probe-file main-log-file) "Main log file should be created.")
     (fiveam:is-true (probe-file debug-log-file) "Debug log file should be created.")
     (fiveam:is-true (probe-file audit-log-file) "Audit log file should be created.")
@@ -137,14 +137,14 @@
     ;; First, write some content to a file that will be appended to
     (format t "Writing initial content to 'append-test.log' (will be appended to later).~%")
     (xlg-lib:with-open-log-files ((:append-log "append-test.log"))
-      (xlg-lib:xlg :append-log "Initial content for append test." :timestamp t)) ; Explicit timestamp
+      (xlg-lib:xlg :append-log "Initial content for append test." :timestamp t))
     (fiveam:is-true (probe-file append-file) "Append test file should be created initially.")
     (fiveam:is (= 1 (count #\Newline (uiop:read-file-string append-file))) "Append test file should have one line initially.")
 
     ;; Now, append more content to it
     (format t "Appending more content to 'append-test.log'.~%")
     (xlg-lib:with-open-log-files ((:append-log "append-test.log" nil :append)) ; Explicitly :append (default)
-      (xlg-lib:xlg :append-log "Appended content for append test." :timestamp nil)) ; No timestamp (explicitly)
+      (xlg-lib:xlg :append-log "Appended content for append test." :timestamp nil))
     (fiveam:is (= 2 (count #\Newline (uiop:read-file-string append-file))) "Append test file should have two lines after appending.")
     (fiveam:is-true (search "Initial content" (uiop:read-file-string append-file)) "Initial content should still be in append file.")
     (fiveam:is-true (search "Appended content" (uiop:read-file-string append-file)) "Appended content should be in append file.")
@@ -154,7 +154,7 @@
     ;; Write some content to a file that will be replaced
     (format t "Writing initial content to 'replace-test.log' (will be replaced later).~%")
     (xlg-lib:with-open-log-files ((:replace-log "replace-test.log"))
-      (xlg-lib:xlg :replace-log "Initial content for replace test - this should be overwritten." :timestamp t)) ; Explicit timestamp
+      (xlg-lib:xlg :replace-log "Initial content for replace test - this should be overwritten." :timestamp t))
     (fiveam:is-true (probe-file replace-file) "Replace test file should be created initially.")
     (fiveam:is (= 1 (count #\Newline (uiop:read-file-string replace-file))) "Replace test file should have one line initially.")
     (fiveam:is-true (search "Initial content" (uiop:read-file-string replace-file)) "Initial content should be in replace file.")
@@ -162,7 +162,7 @@
     ;; Now, replace the content of that file
     (format t "Replacing content of 'replace-test.log'.~%")
     (xlg-lib:with-open-log-files ((:replace-log "replace-test.log" nil :replace)) ; Explicitly :replace
-      (xlg-lib:xlg :replace-log "Replaced content for replace test - this should be the ONLY line." :timestamp nil)) ; No timestamp (explicitly)
+      (xlg-lib:xlg :replace-log "Replaced content for replace test - this should be the ONLY line." :timestamp nil))
     (fiveam:is (= 1 (count #\Newline (uiop:read-file-string replace-file))) "Replace test file should have one line after replacing.")
     (fiveam:is-false (search "Initial content" (uiop:read-file-string replace-file)) "Initial content should NOT be in replace file after replacement.")
     (fiveam:is-true (search "Replaced content" (uiop:read-file-string replace-file)) "Replaced content should be in replace file.")
@@ -177,26 +177,26 @@
     (when (probe-file flush-test-file) (delete-file flush-test-file))
 
     (xlg-lib:with-open-log-files ((:flush-log flush-test-file :replace)) ; Use :replace to start fresh
-      (xlg-lib:xlg :flush-log "First message, should be written immediately by XLG." :timestamp t) ; Explicit timestamp
-      (xlg-lib:xlg :flush-log "Second message, also written by XLG." :timestamp t) ; Explicit timestamp
+      (xlg-lib:xlg :flush-log "First message, should be written immediately by XLG." :timestamp t)
+      (xlg-lib:xlg :flush-log "Second message, also written by XLG." :timestamp t)
 
       (format t "Writing a message without XLG, then flushing all streams manually.~%")
       ;; Write directly to the stream without XLG's auto-flush
       (let ((stream (gethash :flush-log xlg-lib::*log-streams*)))
         (when (streamp stream) ; Ensure stream is valid before writing
-          (format stream "~aThis is a direct write, not auto-flushed by XLG.~%" (xlg-lib::formatted-current-time-micro ""))
-          (format stream "~aAnother direct message, still buffered.~%" (xlg-lib::formatted-current-time-micro ""))))
+          (format stream "This is a direct write, not auto-flushed by XLG.~%")
+          (format stream "Another direct message, still buffered.~%")))
 
-      (xlg-lib:flush-all-log-streams) ; Call the explicit flush function
+      (xlg-lib:flush-all-log-streams)
       (format t "All log streams explicitly flushed.~%")
 
-      (xlg-lib:xlg :flush-log "Third message, written after manual flush." :timestamp nil)) ; No timestamp (explicitly)
+      (xlg-lib:xlg :flush-log "Third message, written after manual flush." :timestamp nil))
     (fiveam:is-true (probe-file flush-test-file) "Flush test file should be created.")
     (let ((content (uiop:read-file-string flush-test-file)))
       (fiveam:is-true (search "First message" content) "First message should be in log.")
       (fiveam:is-true (search "Second message" content) "Second message should be in log.")
-      (fiveam:is-true (search "This message is written directly" content) "Direct message should be in log.")
-      (fiveam:is-true (search "Another direct message" content) "Another direct message should be in log.")
+      (fiveam:is-true (search "This is a direct write, not auto-flushed by XLG." content) "Direct message should be in log.")
+      (fiveam:is-true (search "Another direct message, still buffered." content) "Another direct message should be in log.")
       (fiveam:is-true (search "Third message" content) "Third message should be in log.")
       (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) (subseq content (search "Third message" content))) "Third message should NOT have timestamp."))
     (format t "Check 'flush-test.log' to see all messages, including those explicitly flushed.~%")))
@@ -213,15 +213,15 @@
     ;; Pass the pre-calculated date prefix string to with-open-log-files
     (xlg-lib:with-open-log-files ((:xlgt-stream "xlgt-test.log" current-date-prefix))
       ;; Log without line-prefix, NO timestamp (default NIL)
-      (let* ((captured-output (make-string-output-stream)) ; Create a new stream for each capture
+      (let* ((captured-output (make-string-output-stream))
              (*standard-output* captured-output)
-             (returned-string (xlg-lib:xlgt :xlgt-stream "Hello from XLGT!" :timestamp nil))) ; Explicitly nil for timestamp
+             (returned-string (xlg-lib:xlgt :xlgt-stream "Hello from XLGT!" :timestamp nil)))
         (fiveam:is-true (search "Hello from XLGT!" returned-string) "XLGT should return formatted string.")
         (fiveam:is-true (search "Hello from XLGT!" (get-output-stream-string captured-output)) "XLGT: Message should be in stdout.")
         (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLGT should NOT include timestamp by default."))
 
       ;; Log with line-prefix, EXPLICIT timestamp (T)
-      (let* ((captured-output (make-string-output-stream)) ; Create a new stream for each capture
+      (let* ((captured-output (make-string-output-stream))
              (*standard-output* captured-output)
              (returned-string (xlg-lib:xlgt :xlgt-stream "Another XLGT message." :line-prefix "[Echo] " :timestamp t)))
         (fiveam:is-true (search "[Echo] Another XLGT message." returned-string) "XLGT should return formatted string with line-prefix.")
@@ -229,7 +229,7 @@
         (fiveam:is-true (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLGT should include timestamp when :timestamp is T."))
 
       ;; Log with :timestamp NIL (explicitly no timestamp)
-      (let* ((captured-output (make-string-output-stream)) ; Create a new stream for each capture
+      (let* ((captured-output (make-string-output-stream))
              (*standard-output* captured-output)
              (returned-string (xlg-lib:xlgt :xlgt-stream "XLGT message without timestamp." :timestamp nil)))
         (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLGT should NOT include timestamp when :timestamp is NIL.")
@@ -237,11 +237,11 @@
         (fiveam:is-true (search "XLGT message without timestamp." (get-output-stream-string captured-output)) "XLGT: Message should be in stdout without timestamp."))
 
       ;; Log with :timestamp NIL and :line-prefix
-      (let* ((captured-output (make-string-output-stream)) ; Create a new stream for each capture
+      (let* ((captured-output (make-string-output-stream))
              (*standard-output* captured-output)
              (returned-string (xlg-lib:xlgt :xlgt-stream "XLGT message with only line-prefix." :line-prefix "[XLGT-NO-TS] " :timestamp nil)))
         (fiveam:is-false (search (subseq (xlg-lib::formatted-current-time-micro "") 0 20) returned-string) "XLG should NOT include timestamp.")
-        (fiveam:is-true (search "[XLGT-NO-TS] XLGT message with only line-prefix." returned-string) "XLGT should include only line-prefix.")
+        (fiveam:is-true (search "[XLGT-NO-TS] XLGT message with only line-prefix." returned-string) "XLG should include only line-prefix.")
         (fiveam:is-true (search "[XLGT-NO-TS] XLGT message with only line-prefix." (get-output-stream-string captured-output)) "XLGT: Message should be in stdout with only line-prefix.")))
     (fiveam:is-true (probe-file xlgt-log-file) "XLGT log file should be created.")
     (let ((content (uiop:read-file-string xlgt-log-file)))
@@ -249,10 +249,7 @@
       (fiveam:is-true (search "Another XLGT message." content) "XLGT: Second message should be in log file.")
       (fiveam:is-true (search "XLGT message without timestamp." content) "XLGT: Third message (no timestamp) should be in log file.")
       (fiveam:is-true (search "[XLGT-NO-TS] XLGT message with only line-prefix." content) "XLGT: Fourth message (only line-prefix) should be in log file."))
-    (format t "Messages written to date-prefixed xlgt-test.log and stdout.~%")) ; End of with-open-log-files
-
-  )
-
+    (format t "Messages written to date-prefixed xlgt-test.log and stdout.~%")))
 
 ;; --- Test Case 7: Nested WITH-OPEN-LOG-FILES with keyword reuse (expecting error) ---
 (fiveam:test nested-with-open-log-files-error-on-reuse
@@ -262,22 +259,22 @@
     (when (probe-file outer-log-file) (delete-file outer-log-file))
     (when (probe-file inner-log-file) (delete-file inner-log-file)) ; Explicit cleanup for inner file
 
-    (xlg-lib:with-open-log-files ((:my-shared-log outer-log-file :replace)) ; Use keyword for stream
-      (xlg-lib:xlg :my-shared-log "Message from outer scope before nested call." :timestamp t) ; Explicit timestamp
+    (xlg-lib:with-open-log-files ((:my-shared-log outer-log-file :replace))
+      (xlg-lib:xlg :my-shared-log "Message from outer scope before nested call." :timestamp t)
       (format t "Attempting to open nested log with same keyword (:MY-SHARED-LOG)...~%")
 
       (handler-case
-          (xlg-lib:with-open-log-files ((:my-shared-log inner-log-file nil :replace)) ; This should error
+          (xlg-lib:with-open-log-files ((:my-shared-log inner-log-file nil :replace))
             ;; This line should NOT be reached if the error is signaled correctly
-            (xlg-lib:xlg :my-shared-log "This message should never be logged by inner scope." :timestamp t) ; Explicit timestamp
+            (xlg-lib:xlg :my-shared-log "This message should never be logged by inner scope." :timestamp t)
             (fiveam:fail "Inner with-open-log-files did NOT signal an error as expected."))
         (error (c)
           (format t "Caught expected error: ~a~%" c)
           (fiveam:pass "Successfully caught expected error for keyword reuse.")))
 
       (format t "Verifying outer log still works after error.~%")
-      (xlg-lib:xlg :my-shared-log "Message from outer scope after nested call attempt." :timestamp t) ; Explicit timestamp
-      (xlg-lib:xlg :my-shared-log "Another message after error, no timestamp." :timestamp nil) ; No timestamp (explicitly)
+      (xlg-lib:xlg :my-shared-log "Message from outer scope after nested call attempt." :timestamp t)
+      (xlg-lib:xlg :my-shared-log "Another message after error, no timestamp." :timestamp nil)
 
       (fiveam:is-true (probe-file outer-log-file) "Outer log file should still exist.")
       (let ((content (uiop:read-file-string outer-log-file)))
