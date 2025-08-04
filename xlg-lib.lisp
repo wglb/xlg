@@ -121,16 +121,11 @@
          (setf ,format-args-g (nreverse ,format-args-g)))
 
 	   (when *debug-flag*
-		 ;; --- DEBUGGING PRINT ---
 		 (format t "~%[XLG DEBUG] Log Keyword: ~S, Format String: ~S~%" ,log-keyword ,format-string)
 		 (format t "[XLG DEBUG] line-prefix-g: ~S, timestamp-g: ~S, format-args-g: ~S~%"
-				 ,line-prefix-g ,timestamp-g ,format-args-g)
-		 ;; --- END DEBUGGING PRINT ---
-		 )
-       
-       
-
-       (let* ((stream (gethash ,log-keyword *log-streams*))
+				 ,line-prefix-g ,timestamp-g ,format-args-g))
+	   
+       (let* ((stream (gethash ,log-keyword *log-streams* *standard-output*))
               (effective-line-prefix (or ,line-prefix-g ""))
               (prefix-string (if ,timestamp-g
                                  (formatted-current-time-micro effective-line-prefix)
